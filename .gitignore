@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+.pnp/
+
+# Build outputs
+dist/
+build/
+*.tsbuildinfo
+
+# Env & secrets — never commit real secrets
+.env
+.env.local
+backend/.env
+frontend/.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# OS
+.DS_Store
+
+# Testing/coverage
+coverage/
+.nyc_output/
+
+# Prisma (when added in Phase 2)
+# Keep migrations, ignore generated client if needed
+# backend/src/generated/
+
+# Uploads (Phase 6/11, D-12)
+uploads/
+captured_emails/
