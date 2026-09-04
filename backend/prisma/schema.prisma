@@ -1,0 +1,512 @@
+// FWRP Prisma schema — Iteration DB-12
+// DB-01: User, DB-02: Organization + User↔Organization, DB-03: Donation, DB-04: Requirement, DB-05: Category, DB-06: Match, DB-07: Delivery, DB-08: Notification, DB-09: AuditLog, DB-10: Relationships, DB-11: Enums, DB-12: Indexes/Constraints (Prisma-supported) + CHECK intent deferred to DB-14.
+// D-03/D-04/D-05/D-08 resolved (ADR-004/005/007); D-06 (partial fulfillment) intentionally unresolved and does not block DB-12 (no Allocation tables).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// D-04: exactly four MVP roles, single role per user
+enum Role {
+  PROVIDER
+  RECIPIENT
+  VOLUNTEER
+  ADMIN
+}
+
+// PRD §24.1 status + checklist DB-01 spec: ACTIVE | SUSPENDED | DELETED
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  DELETED
+}
+
+// DB-02: Organization verification_status — PENDING, UNDER_REVIEW, VERIFIED, REJECTED per PRD FR-03 and DB-02 spec
+enum VerificationStatus {
+  PENDING
+  UNDER_REVIEW
+  VERIFIED
+  REJECTED
+}
+
+// DB-02: Organization type — finite MVP set derived from PRD §7 examples
+enum OrganizationType {
+  RESTAURANT
+  HOTEL
+  CAFETERIA
+  SUPERMARKET
+  EVENT_ORGANIZER
+  NGO
+  SHELTER
+  COMMUNITY_KITCHEN
+  FOOD_BANK
+  OTHER
+}
+
+// DB-03: Donation status per PRD FR-06 (11 values) + D-05 ADR-005: MATCHED is informational/non-blocking
+// AVAILABLE → ACCEPTED remains valid; MATCHED does not reserve allocation (see ADR-005)
+enum DonationStatus {
+  DRAFT
+  AVAILABLE
+  MATCHED
+  ACCEPTED
+  PICKUP_ASSIGNED
+  PICKED_UP
+  IN_TRANSIT
+  DELIVERED
+  COMPLETED
+  EXPIRED
+  CANCELLED
+}
+
+// DB-04: Requirement status per PRD FR-08 (Requirement Status) — OPEN, PARTIALLY_FULFILLED, FULFILLED, EXPIRED, CANCELLED
+enum RequirementStatus {
+  OPEN
+  PARTIALLY_FULFILLED
+  FULFILLED
+  EXPIRED
+  CANCELLED
+}
+
+// DB-04: Requirement priority per PRD §34 Priority Model (LOW, MEDIUM, HIGH, CRITICAL)
+// Reused from §34; also applies to §24.4 Requirement priority field
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+// DB-06: Match status per PRD §24.5 and DB-06 spec — exactly RECOMMENDED, ACCEPTED, REJECTED, EXPIRED
+// D-05: RECOMMENDED is informational recommendation (Match), not Donation reservation; REJECTED applies to Match, not Donation
+enum MatchStatus {
+  RECOMMENDED
+  ACCEPTED
+  REJECTED
+  EXPIRED
+}
+
+// DB-07: Delivery status per PRD FR-14 — exactly Assigned, Accepted, At Pickup, Picked Up, In Transit, Delivered, Confirmed
+enum DeliveryStatus {
+  ASSIGNED
+  ACCEPTED
+  AT_PICKUP
+  PICKED_UP
+  IN_TRANSIT
+  DELIVERED
+  CONFIRMED
+}
+
+// DB-08: Notification type per PRD §17 / DB-08 spec — 10 event kinds;
+// ORG-03 adds ORGANIZATION_VERIFIED + ORGANIZATION_REJECTED (owner notices
+// for verification outcomes; no existing value fits, placeholders forbidden).
+enum NotificationType {
+  DONATION_CREATED
+  DONATION_MATCHED
+  DONATION_ACCEPTED
+  PICKUP_ASSIGNED
+  PICKUP_REMINDER
+  DELIVERY_DELAYED
+  EXPIRY_WARNING
+  DONATION_EXPIRED
+  DELIVERY_COMPLETED
+  CONFIRMATION_PENDING
+  ORGANIZATION_VERIFIED
+  ORGANIZATION_REJECTED
+}
+
+model User {
+  // PRD §24.1 user_id — cuid, mapped to user_id column
+  id String @id @default(cuid()) @map("user_id")
+
+  // PRD §24.1 name (required)
+  name String
+
+  // PRD §24.1 email — unique, indexed via unique constraint (DB-12: unique emails enforced via @unique, no duplicate @@index)
+  email String @unique
+
+  // PRD FR-01 phone — required per FR-01 (may include phone)
+  phone String
+
+  // Persisted hash only; never plaintext. Explicit name per auth storage boundary (D-02).
+  // Maps to password_hash column in PRD §24.1
+  passwordHash String @map("password_hash")
+
+  // D-04: single enum role
+  role Role
+
+  // D-03: nullable FK to Organization (N:1, User N → Organization 1)
+  // PROVIDER/RECIPIENT have organizationId set; VOLUNTEER/ADMIN have null.
+  // DB-12: FK onDelete: SetNull (nullable, preserve User if Organization deleted), onUpdate: Cascade
+  organizationId String?       @map("organization_id")
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  // PRD §24.1 status — defaults to ACTIVE
+  status UserStatus @default(ACTIVE)
+
+  // PRD §24.1 timestamps — UTC, explicit mapping
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // DB-03: 1 Provider User → N Donations (providerId FK on Donation)
+  donations Donation[]
+
+  // DB-07: 1 Volunteer User → N Deliveries (volunteerId FK on Delivery)
+  volunteerDeliveries Delivery[]
+
+  // DB-08: 1 User → N Notifications (userId FK on Notification)
+  notifications Notification[]
+
+  // DB-09: 1 User → N AuditLogs (userId FK on AuditLog) — nullable for system actions; back-relation for audit trail
+  auditLogs AuditLog[]
+
+  @@index([role])
+  @@index([organizationId])
+  @@map("users")
+}
+
+model Organization {
+  // PRD §24.2 organization_id — cuid, mapped
+  id String @id @default(cuid()) @map("organization_id")
+
+  // PRD §24.2 name (required)
+  name String
+
+  // PRD §24.2 type — OrganizationType enum
+  type OrganizationType
+
+  // PRD §24.2 address (required)
+  address String
+
+  // PRD §24.2 latitude — Float, required for Haversine distance (PRD §37 assumption 5, §39 risk)
+  // DB-12: CHECK latitude BETWEEN -90 AND 90 (deferred to DB-14 migration, Prisma does not natively support CHECK)
+  latitude Float
+
+  // PRD §24.2 longitude — Float, required
+  // DB-12: CHECK longitude BETWEEN -180 AND 180 (deferred to DB-14 migration)
+  longitude Float
+
+  // PRD §24.2 contact_information — optional string (phone/email) for MVP
+  contactInformation String? @map("contact_information")
+
+  // PRD §24.2 verification_status + FR-03 — defaults to PENDING per workflow PENDING → UNDER_REVIEW → VERIFIED/REJECTED
+  verificationStatus VerificationStatus @default(PENDING) @map("verification_status")
+
+  // PRD §24.2 timestamps — UTC, explicit mapping
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // D-03: 1 Organization → many Users
+  users User[]
+
+  // DB-04: 1 Organization → many Requirements (organizationId FK on Requirement)
+  requirements Requirement[]
+
+  @@index([verificationStatus])
+  @@index([latitude, longitude])
+  @@map("organizations")
+}
+
+model Donation {
+  // PRD §24.3 donation_id — cuid, mapped
+  id String @id @default(cuid()) @map("donation_id")
+
+  // PRD §24.3 provider_id — FK to User (provider). Provider is a User with PROVIDER role; verified via ORG flow (BR-02) in future business logic, not DB constraint here.
+  // DB-12: FK onDelete: Restrict (prevent deleting provider with donations), onUpdate: Cascade
+  providerId String @map("provider_id")
+  provider   User   @relation(fields: [providerId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  // PRD §24.3 food_name — required (FR-04)
+  foodName String @map("food_name")
+
+  // PRD §24.3 category — String; D-08 resolved via Category table (DB-05) with String validation variant (ADR 007): Donation.category remains String, validated against active Category rows in DON-01, not FK.
+  category String
+
+  // PRD §24.3 food_type — required (e.g., vegetarian), String per PRD
+  foodType String @map("food_type")
+
+  // PRD §24.3 quantity — required, positive.
+  // DB-12: CHECK quantity > 0 (deferred to DB-14 migration, Prisma does not natively support CHECK)
+  quantity Float
+
+  // PRD §24.3 unit — required (e.g., meals, kg)
+  unit String
+
+  // PRD §24.3 available_from — required start of window (FR-16)
+  availableFrom DateTime @map("available_from")
+
+  // PRD §24.3 available_until — required end of window.
+  // DB-12: CHECK available_until > available_from (deferred to DB-14 migration, Prisma does not natively support CHECK; application validation via BE-09 until then)
+  availableUntil DateTime @map("available_until")
+
+  // PRD §24.3 pickup_location — required address string
+  pickupLocation String @map("pickup_location")
+
+  // DB-03 spec: pickup_latitude/longitude if map support — optional Floats for Haversine without PostGIS (PRD §37, §39, D-07 geocoding not required to block DB-03)
+  // DB-12: CHECK pickupLatitude BETWEEN -90 AND 90, pickupLongitude BETWEEN -180 AND 180 (deferred to DB-14, nullable columns)
+  pickupLatitude  Float? @map("pickup_latitude")
+  pickupLongitude Float? @map("pickup_longitude")
+
+  // PRD §24.3 storage_requirement — optional (If applicable per FR-04)
+  storageRequirement String? @map("storage_requirement")
+
+  // PRD §24.3 description — optional
+  description String?
+
+  // PRD §24.3 status — DonationStatus enum per FR-06 (11 values); D-05 ADR-005: MATCHED informational, AVAILABLE → ACCEPTED remains valid
+  status DonationStatus @default(AVAILABLE)
+
+  // PRD §24.3 timestamps
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // DB-06: 1 Donation → N Matches (donationId FK on Match)
+  matches Match[]
+
+  // DB-07: 1 Donation → N Deliveries (donationId FK on Delivery) — allows reassignment per DB-10 (1:1 or 1:N)
+  deliveries Delivery[]
+
+  // DB-03 indexes per checklist: provider_id, status, category, available_until, created_at
+  @@index([providerId])
+  @@index([status])
+  @@index([category])
+  @@index([availableUntil])
+  @@index([createdAt])
+  @@map("donations")
+}
+
+model Requirement {
+  // PRD §24.4 requirement_id — cuid, mapped
+  id String @id @default(cuid()) @map("requirement_id")
+
+  // PRD §24.4 organization_id — FK to Organization (recipient organization). Requirement is owned by a verified recipient Organization (FR-07, BR-02).
+  // DB-12: FK onDelete: Restrict (prevent deleting organization with requirements), onUpdate: Cascade
+  organizationId String       @map("organization_id")
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  // PRD §24.4 food_category — String; D-08 resolved via Category table (DB-05) with String validation variant (ADR 007): Requirement.foodCategory remains String, validated against active Category rows, not FK.
+  foodCategory String @map("food_category")
+
+  // PRD §24.4 food_type — required (same domain as Donation.foodType)
+  foodType String @map("food_type")
+
+  // PRD §24.4 quantity_required — required, positive.
+  // DB-12: CHECK quantityRequired > 0 (deferred to DB-14)
+  quantityRequired Float @map("quantity_required")
+
+  // PRD §24.4 quantity_fulfilled — tracks progress toward fulfillment; defaults 0, updated on delivery confirmation (FR-08 PARTIALLY_FULFILLED → FULFILLED). Not allocation logic.
+  // DB-12: CHECK quantityFulfilled >= 0 (deferred to DB-14)
+  quantityFulfilled Float @default(0) @map("quantity_fulfilled")
+
+  // PRD §24.4 required_by — deadline for requirement (FR-07 example: Required before 10:00 PM)
+  requiredBy DateTime @map("required_by")
+
+  // PRD §24.4 priority — Requirement priority per PRD §34 (LOW/MEDIUM/HIGH/CRITICAL). Uses shared Priority enum.
+  priority Priority @default(MEDIUM)
+
+  // PRD §24.4 location — recipient location string (address). For MVP, String address; geospatial filtering via Organization lat/lng if needed later (PRD §18, §39).
+  location String
+
+  // PRD §24.4 status — RequirementStatus enum per FR-08: OPEN, PARTIALLY_FULFILLED, FULFILLED, EXPIRED, CANCELLED. Defaults to OPEN (new requirement).
+  status RequirementStatus @default(OPEN)
+
+  // PRD §24.4 timestamps — UTC, explicit mapping
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // DB-06: 1 Requirement → N Matches (requirementId FK on Match)
+  matches Match[]
+
+  // DB-04 indexes per checklist: organization_id, status, priority, required_by
+  @@index([organizationId])
+  @@index([status])
+  @@index([priority])
+  @@index([requiredBy])
+  @@map("requirements")
+}
+
+// DB-05: Category table per D-08 (ADR 007) — Category database table with administrator-configurable active categories (Option A, String validation variant)
+// PRD FR-05 categories: Prepared meals, Bakery products, Fruits, Vegetables, Packaged food, Dairy products, Other
+// Donation.category and Requirement.foodCategory remain String fields validated against active Category rows in DON-01 (not FK in DB-05)
+model Category {
+  // category_id — cuid, mapped
+  id String @id @default(cuid()) @map("category_id")
+
+  // Category name — unique, e.g., "Prepared meals"
+  name String @unique
+
+  // URL-safe slug — unique, e.g., "prepared_meals" for filtering (§18)
+  slug String @unique
+
+  // Whether category is active for validation/filtering
+  isActive Boolean @default(true) @map("is_active")
+
+  // Timestamps — UTC
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("categories")
+}
+
+// DB-06: Match per PRD §24.5 — links Donation and Requirement with score and distance, status tracks recommendation lifecycle
+// D-05: RECOMMENDED is informational recommendation (Match), not Donation reservation; REJECTED applies to Match, not Donation
+// D-06: No allocation/quantity fields — partial fulfillment remains unresolved, Match may reference Donation/Requirement but allocation semantics deferred
+model Match {
+  // PRD §24.5 match_id — cuid, mapped
+  id String @id @default(cuid()) @map("match_id")
+
+  // PRD §24.5 donation_id — FK to Donation (indexed, part of unique constraint)
+  // DB-12: FK onDelete: Cascade (if Donation deleted, its Matches should be removed), onUpdate: Cascade
+  donationId String   @map("donation_id")
+  donation   Donation @relation(fields: [donationId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  // PRD §24.5 requirement_id — FK to Requirement (indexed, part of unique constraint)
+  // DB-12: FK onDelete: Cascade, onUpdate: Cascade
+  requirementId String      @map("requirement_id")
+  requirement   Requirement @relation(fields: [requirementId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  // PRD §24.5 matching_score —Float, required per PRD (e.g., weighted score). Type Float per PRD numeric score.
+  matchingScore Float @map("matching_score")
+
+  // PRD §24.5 distance — Float, required (km, e.g., 3.2 km in §47 scenario). Haversine distance.
+  distance Float
+
+  // PRD §24.5 status — MatchStatus enum per DB-06 spec: RECOMMENDED, ACCEPTED, REJECTED, EXPIRED. Defaults to RECOMMENDED (new recommendation).
+  status MatchStatus @default(RECOMMENDED)
+
+  // PRD §24.5 timestamps — UTC
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // DB-06: uniqueness constraint on (donation_id, requirement_id) where required — prevents duplicate recommendation for same pair
+  @@unique([donationId, requirementId])
+  // DB-06 indexes per checklist: donation_id, requirement_id, matching_score
+  @@index([donationId])
+  @@index([requirementId])
+  @@index([matchingScore])
+  @@map("matches")
+}
+
+// DB-07: Delivery per PRD §24.6 + FR-14 — tracks volunteer assignment and delivery workflow
+// FR-14 status workflow: Assigned → Accepted → At Pickup → Picked Up → In Transit → Delivered → Confirmed
+model Delivery {
+  // PRD §24.6 delivery_id — cuid, mapped
+  id String @id @default(cuid()) @map("delivery_id")
+
+  // PRD §24.6 donation_id — FK to Donation
+  // DB-12: FK onDelete: Restrict (prevent deleting Donation with Deliveries), onUpdate: Cascade
+  donationId String   @map("donation_id")
+  donation   Donation @relation(fields: [donationId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  // PRD §24.6 volunteer_id — FK to User (Volunteer) per DB-07 spec; reuses existing User model, no separate Volunteer model
+  // DB-12: FK onDelete: Restrict (prevent deleting Volunteer with Deliveries), onUpdate: Cascade
+  volunteerId String @map("volunteer_id")
+  volunteer   User   @relation(fields: [volunteerId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  // PRD §24.6 pickup_location — required
+  pickupLocation String @map("pickup_location")
+
+  // PRD §24.6 delivery_location — required
+  deliveryLocation String @map("delivery_location")
+
+  // PRD §24.6 assigned_at — required (when volunteer was assigned)
+  assignedAt DateTime @default(now()) @map("assigned_at")
+
+  // PRD §24.6 pickup_time — optional (when food was picked up)
+  pickupTime DateTime? @map("pickup_time")
+
+  // PRD §24.6 delivery_time — optional (when food was delivered)
+  deliveryTime DateTime? @map("delivery_time")
+
+  // PRD FR-14 status — DeliveryStatus enum per DB-07 spec (7 values); defaults to ASSIGNED
+  status DeliveryStatus @default(ASSIGNED)
+
+  // PRD §24.6 proof_of_delivery — optional (e.g., image path)
+  proofOfDelivery String? @map("proof_of_delivery")
+
+  // PRD §24.6 notes — optional
+  notes String?
+
+  // Timestamps — UTC
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // DB-07 indexes per checklist: donation_id, volunteer_id, status
+  @@index([donationId])
+  @@index([volunteerId])
+  @@index([status])
+  @@map("deliveries")
+}
+
+// DB-08: Notification per PRD §24.7 + §17 — stores user notifications for donation/matching/delivery/expiry events
+model Notification {
+  // PRD §24.7 notification_id — cuid, mapped
+  id String @id @default(cuid()) @map("notification_id")
+
+  // PRD §24.7 user_id — FK to User
+  // DB-12: FK onDelete: Cascade (if User deleted, their Notifications removed), onUpdate: Cascade
+  userId String @map("user_id")
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  // PRD §24.7 type — NotificationType enum per DB-08/PRD §17 (10 event kinds)
+  type NotificationType
+
+  // PRD §24.7 title — required (e.g., "Donation Matched")
+  title String
+
+  // PRD §24.7 message — required (e.g., "Your donation D-1024 was matched to NGO A")
+  message String
+
+  // PRD §24.7 is_read — defaults to false (unread)
+  isRead Boolean @default(false) @map("is_read")
+
+  // PRD §24.7 created_at — required (when notification was created)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // DB-08 index per checklist: (user_id, is_read, created_at)
+  @@index([userId, isRead, createdAt])
+  @@map("notifications")
+}
+
+// DB-09: AuditLog per PRD §24.8 — append-only audit trail for important actions (NFR-03, AC-11, BR-08)
+// Intent: append-only (no UPDATE/DELETE) — enforcement deferred to Phase 16 (app + DB) per DB-09 spec; schema is the foundation
+model AuditLog {
+  // PRD §24.8 log_id — cuid, mapped
+  id String @id @default(cuid()) @map("log_id")
+
+  // PRD §24.8 user_id — FK to User (actor); nullable for system actions (e.g., SYSTEM_EXPIRE per audit design)
+  // DB-12: FK onDelete: SetNull (preserve audit trail if User deleted), onUpdate: Cascade
+  userId String? @map("user_id")
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  // PRD §24.8 action — required (e.g., "VERIFY", "ACCEPT", "SYSTEM_EXPIRE")
+  action String
+
+  // PRD §24.8 entity_type — required (e.g., "Organization", "Donation", "Delivery")
+  entityType String @map("entity_type")
+
+  // PRD §24.8 entity_id — required (target id)
+  entityId String @map("entity_id")
+
+  // PRD §24.8 old_value — optional (JSON stringified previous state, redacted)
+  oldValue String? @map("old_value")
+
+  // PRD §24.8 new_value — optional (JSON stringified new state)
+  newValue String? @map("new_value")
+
+  // PRD §24.8 timestamp — required, indexed
+  timestamp DateTime @default(now()) @map("timestamp")
+
+  // DB-09 indexes per checklist: entity_type, entity_id, user_id, timestamp (separate + composite for entity lookup)
+  @@index([entityType])
+  @@index([entityId])
+  @@index([userId])
+  @@index([timestamp])
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+}
