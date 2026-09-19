@@ -1,4 +1,16 @@
-import { createPlaceholderRouter } from './placeholder';
+import { Router } from 'express';
+import { createRequirementHandler } from '../controllers/requirements.controller';
+import { authenticate } from '../middleware/auth';
+import { requireRole } from '../middleware/rbac';
+import { validateBody } from '../middleware/validate';
+import { createRequirementSchema } from '../services/requirements.service';
 
-// BE-04 structural router. Requirement workflows belong to Phase 7.
-export const requirementRouter = createPlaceholderRouter('Requirement');
+export const requirementRouter = Router();
+
+requirementRouter.post(
+  '/',
+  authenticate,
+  requireRole('RECIPIENT'),
+  validateBody(createRequirementSchema),
+  createRequirementHandler
+);
