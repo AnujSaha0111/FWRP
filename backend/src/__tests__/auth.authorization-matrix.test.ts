@@ -178,7 +178,7 @@ describe('AUTH-07 role matrix: refresh rotation is role-agnostic', () => {
 });
 
 describe('AUTH-07 role matrix: future-domain placeholders stay ungated 501s for every role', () => {
-  it.each(['/api/requirements', '/api/notifications'])('%s answers 501 with or without any role', async (prefix) => {
+  it.each(['/api/notifications'])('%s answers 501 with or without any role', async (prefix) => {
     const app = createApp();
     const anon = await request(app).get(prefix);
     expect(anon.status).toBe(501);

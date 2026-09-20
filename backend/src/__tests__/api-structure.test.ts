@@ -6,7 +6,6 @@ import { createApp } from '../app';
 // answer 501 (never fake business success). No live DB, SMTP, or network.
 
 const PLACEHOLDER_PREFIXES = [
-  '/api/requirements',
   '/api/matches',
   '/api/deliveries',
   '/api/analytics',
@@ -35,7 +34,7 @@ describe('BE-04 API structure', () => {
 
   it('placeholders answer 501 for any method and nested path without crashing', async () => {
     const app = createApp();
-    const post = await request(app).post('/api/requirements').send({ foodCategory: 'Vegetables' });
+    const post = await request(app).post('/api/matches').send({ foodCategory: 'Vegetables' });
     expect(post.status).toBe(501);
     expect(post.body.error.code).toBe('NOT_IMPLEMENTED');
     const nested = await request(app).get('/api/notifications/unread-count');
@@ -59,17 +58,27 @@ describe('BE-04 API structure', () => {
     expect(res.body.error.code).toBe('NOT_FOUND');
   });
 
-  it('donations router serves the real acceptance endpoint (placeholder retired by ORG-05)', async () => {
+  it('donations router serves the authenticated listing endpoint (placeholder retired by DON-06)', async () => {
     const app = createApp();
-    // Only POST /:id/accept is mounted; bare prefix falls through to 404.
+    // GET / (DON-06 listing) is live and requires authentication; an
+    // unauthenticated request is rejected before any handler runs.
     const res = await request(app).get('/api/donations');
-    expect(res.status).toBe(404);
-    expect(res.body.error.code).toBe('NOT_FOUND');
+    expect(res.status).toBe(401);
+    expect(res.body.error.code).toBe('UNAUTHORIZED');
+  });
+
+  it('requirements router serves the authenticated creation endpoint (placeholder retired by REQ-01)', async () => {
+    const app = createApp();
+    // POST / (REQ-01 creation) is live and requires authentication; an
+    // unauthenticated request is rejected before any handler runs.
+    const res = await request(app).post('/api/requirements').send({});
+    expect(res.status).toBe(401);
+    expect(res.body.error.code).toBe('UNAUTHORIZED');
   });
 
   it('placeholders require no authentication (structure only, no auth rules yet)', async () => {
     const app = createApp();
-    const res = await request(app).get('/api/requirements');
+    const res = await request(app).get('/api/matches');
     expect(res.status).toBe(501);
     expect(res.body.error.code).toBe('NOT_IMPLEMENTED');
   });
@@ -92,7 +101,7 @@ describe('BE-04 API structure', () => {
 
   it('leaks no internals from placeholder errors', async () => {
     const app = createApp();
-    const res = await request(app).get('/api/requirements');
+    const res = await request(app).get('/api/deliveries');
     const blob = JSON.stringify(res.body);
     expect(res.status).toBe(501);
     expect(blob).not.toMatch(/stack|at .*\(.*\)|prisma|postgres|secret|password|jwt/i);

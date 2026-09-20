@@ -165,7 +165,7 @@ describe('BE-NOTIF-01 Notification model/schema wiring', () => {
 
   it('adds no service, email, or instrumentation code (BE-NOTIF-02/03/04 out of scope)', () => {
     const services = fs.readdirSync(path.join(backendDir, 'src', 'services'));
-    expect(services).toEqual(['audit.service.ts', 'auth.service.ts', 'donations.service.ts', 'email.service.ts', 'notification.service.ts', 'organizations.service.ts', 'users.service.ts']);
+    expect(services).toEqual(['audit.service.ts', 'auth.service.ts', 'donations.service.ts', 'email.service.ts', 'notification.service.ts', 'organizations.service.ts', 'requirements.service.ts', 'users.service.ts']);
     // BE-04 owns route structure: notifications.ts exists but must stay a
     // placeholder with no service calls or business wiring.
     const routes = fs.readdirSync(path.join(backendDir, 'src', 'routes'));
