@@ -12,10 +12,6 @@ import { createApp } from '../app';
 import { createRequirement } from '../services/requirements.service';
 import { signAccessToken } from '../utils/jwt';
 
-// REQ-01: recipient requirement creation — POST /api/requirements. RECIPIENT +
-// VERIFIED organization only; ownership derived from the session; status OPEN;
-// quantity_fulfilled default 0; strict body rejects server-controlled fields.
-
 function validBody(overrides: Record<string, unknown> = {}) {
   return {
     food_category: 'Prepared meals',
@@ -50,13 +46,27 @@ function mockBackend(caller: Record<string, unknown> | null) {
   }));
   const auditCreate = vi.fn();
   const notificationCreate = vi.fn();
-  vi.mocked(getPrisma).mockReturnValue({
+  const historyCreate = vi.fn(async (args: { data: Record<string, unknown> }) => ({
+    id: 'rh-1',
+    ...args.data,
+  }));
+  const client = {
     user: { findUnique: userFind },
+    category: { findFirst: vi.fn(async () => ({ id: 'cat-1' })) },
     requirement: { create: requirementCreate },
+    requirementHistory: { create: historyCreate },
     auditLog: { create: auditCreate },
     notification: { create: notificationCreate },
-  } as unknown as PrismaClient);
-  return { userFind, requirementCreate, auditCreate, notificationCreate };
+    $transaction: vi.fn(async (arg: unknown) => {
+      if (typeof arg === 'function') {
+        return (arg as (c: unknown) => Promise<unknown>)(client);
+      }
+      if (Array.isArray(arg)) return Promise.all(arg);
+      throw new Error('unsupported transaction');
+    }),
+  };
+  vi.mocked(getPrisma).mockReturnValue(client as unknown as PrismaClient);
+  return { userFind, requirementCreate, historyCreate, auditCreate, notificationCreate };
 }
 
 function token(role = 'RECIPIENT', id = 'user-1'): string {
@@ -269,6 +279,7 @@ describe('REQ-01 create requirement', () => {
       const app = createApp();
       vi.mocked(getPrisma).mockReturnValue({
         user: { findUnique: vi.fn(async () => callerRow()) },
+        category: { findFirst: vi.fn(async () => ({ id: 'cat-1' })) },
         requirement: {
           create: vi.fn(async () => {
             throw new Error('INSERT failed postgresql://u:p@h/db');

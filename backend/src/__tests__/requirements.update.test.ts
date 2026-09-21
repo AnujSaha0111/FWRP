@@ -12,11 +12,6 @@ import { createApp } from '../app';
 import { updateRequirement } from '../services/requirements.service';
 import { signAccessToken } from '../utils/jwt';
 
-// REQ-02: owner-organization requirement editing — PUT /api/requirements/:id.
-// OPEN/PARTIALLY_FULFILLED only; session-derived ownership; strict partial body;
-// effective `quantity_fulfilled <= quantity_required` invariant; one
-// REQUIREMENT_UPDATED audit in the same transaction.
-
 interface ReqRow {
   id: string;
   organizationId: string;
@@ -99,8 +94,14 @@ function mockBackend(caller: ReturnType<typeof callerRow> | null, seed: ReqRow[]
     return { id: `audit-${auditLogs.length}`, ...args.data };
   });
 
+  const historyCreate = vi.fn(async (args: { data: Record<string, unknown> }) => ({
+    id: 'rh-1',
+    ...args.data,
+  }));
   const tx = {
     requirement: { findUnique: requirementFindUnique, updateMany: requirementUpdateMany },
+    requirementHistory: { create: historyCreate },
+    category: { findFirst: vi.fn(async () => ({ id: 'cat-1' })) },
     auditLog: { create: auditCreate },
   };
   const $transaction = vi.fn(async (fn: (t: unknown) => Promise<unknown>) => {

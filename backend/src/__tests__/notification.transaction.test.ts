@@ -3,8 +3,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// Fail loudly if the service ever touches the global client: BE-NOTIF-04 must
-// prove the notification write participates in the SUPPLIED transaction.
 vi.mock('../lib/prisma', () => ({
   getPrisma: vi.fn(() => {
     throw new Error('global Prisma client must not be used inside the transaction helper');
@@ -16,10 +14,6 @@ import { getPrisma } from '../lib/prisma';
 import { notificationService } from '../services/notification.service';
 import { AppError } from '../middleware/error';
 import { runSimulatedTransaction } from './helpers/simulated-transaction';
-
-// BE-NOTIF-04: transaction-safe notification creation (test helper level).
-// Deterministic simulated-transaction verification only — no live database.
-// Live PostgreSQL ROLLBACK verification remains blocked by DB-14.
 
 const testDir = path.dirname(fileURLToPath(import.meta.url));
 const backendDir = path.join(testDir, '..', '..');
@@ -112,6 +106,12 @@ describe('BE-NOTIF-04 transactional create + rollback (simulated)', () => {
       '20260831000001_init',
       '20260831000002_add_check_constraints',
       '20260903000003_org_notification_types',
+      // REQ-06 (authoritative): additive requirement-history migration.
+      '20260920000004_requirement_history',
+      // REQ-07 (authoritative): additive RequirementHistoryAction CANCEL value.
+      '20260920000005_requirement_history_cancel',
+      // REQ-08 (authoritative): additive Allocation representation.
+      '20260920000006_allocation',
     ]);
     const init = fs.readFileSync(path.join(dir, entries[0], 'migration.sql'), 'utf8');
     const checks = fs.readFileSync(path.join(dir, entries[1], 'migration.sql'), 'utf8');

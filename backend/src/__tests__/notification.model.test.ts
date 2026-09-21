@@ -4,13 +4,6 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { NotificationType, Prisma } from '@prisma/client';
 
-// BE-NOTIF-01: Notification model/schema wiring verification.
-// DB-08 created the Notification model + 10 PRD §17 NotificationType values;
-// ORG-03 added ORGANIZATION_VERIFIED + ORGANIZATION_REJECTED for owner
-// notices on verification outcomes (own forward migration, no live DB).
-// These tests verify the wiring using only the generated Prisma client DMMF
-// and static files — no live database.
-
 const EXPECTED_TYPES = [
   'DONATION_CREATED',
   'DONATION_MATCHED',
@@ -36,6 +29,10 @@ const EXPECTED_MODELS = [
   'Delivery',
   'Notification',
   'AuditLog',
+  // REQ-06 (authoritative): dedicated immutable requirement-history model.
+  'RequirementHistory',
+  // REQ-08 / D-06 (authoritative): dedicated allocation representation.
+  'Allocation',
 ];
 
 const testDir = path.dirname(fileURLToPath(import.meta.url));
@@ -128,9 +125,11 @@ describe('BE-NOTIF-01 Notification model/schema wiring', () => {
   it('introduces no speculative models; model/enum counts unchanged', () => {
     const models = Prisma.dmmf.datamodel.models.map((m) => m.name).sort();
     expect(models).toEqual([...EXPECTED_MODELS].sort());
-    expect(Prisma.dmmf.datamodel.models).toHaveLength(9);
-    expect(Prisma.dmmf.datamodel.enums).toHaveLength(10);
-    for (const banned of ['Allocation', 'Outbox', 'Volunteer', 'EmailLog', 'NotificationPreference']) {
+    // 9 DB models + REQ-06 RequirementHistory + REQ-08 Allocation.
+    expect(Prisma.dmmf.datamodel.models).toHaveLength(11);
+    // 10 enums + REQ-06 RequirementHistoryAction.
+    expect(Prisma.dmmf.datamodel.enums).toHaveLength(11);
+    for (const banned of ['DonationAllocation', 'Outbox', 'Volunteer', 'EmailLog', 'NotificationPreference']) {
       expect(models).not.toContain(banned);
     }
   });
@@ -165,7 +164,7 @@ describe('BE-NOTIF-01 Notification model/schema wiring', () => {
 
   it('adds no service, email, or instrumentation code (BE-NOTIF-02/03/04 out of scope)', () => {
     const services = fs.readdirSync(path.join(backendDir, 'src', 'services'));
-    expect(services).toEqual(['audit.service.ts', 'auth.service.ts', 'donations.service.ts', 'email.service.ts', 'notification.service.ts', 'organizations.service.ts', 'requirements.service.ts', 'users.service.ts']);
+    expect(services).toEqual(['allocations.service.ts', 'audit.service.ts', 'auth.service.ts', 'donations.service.ts', 'email.service.ts', 'notification.service.ts', 'organizations.service.ts', 'requirements.service.ts', 'users.service.ts']);
     // BE-04 owns route structure: notifications.ts exists but must stay a
     // placeholder with no service calls or business wiring.
     const routes = fs.readdirSync(path.join(backendDir, 'src', 'routes'));

@@ -1,9 +1,3 @@
-/**
- * Distance utilities — BE-09
- * Haversine implementation using already-available latitude/longitude.
- * No map API required (D-07 fallback). Future map API can be swapped via this abstraction.
- */
-
 const EARTH_RADIUS_KM = 6371.0088;
 
 export function toRadians(degrees: number): number {
@@ -24,10 +18,11 @@ export function validateCoordinates(lat: number, lng: number): { valid: boolean;
   return { valid: true };
 }
 
-/**
- * Haversine distance between two points.
- * Returns distance in kilometers.
- */
+export interface GeoCoordinates {
+  latitude: number | null | undefined;
+  longitude: number | null | undefined;
+}
+
 export function haversineDistance(
   from: { latitude: number; longitude: number },
   to: { latitude: number; longitude: number }
@@ -44,6 +39,38 @@ export function haversineDistance(
 
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return EARTH_RADIUS_KM * c;
+}
+
+export function calculateDistanceKm(
+  from: GeoCoordinates | null | undefined,
+  to: GeoCoordinates | null | undefined
+): number | null {
+  if (!from || !to) return null;
+  const fromLat = from.latitude;
+  const fromLng = from.longitude;
+  const toLat = to.latitude;
+  const toLng = to.longitude;
+  if (
+    typeof fromLat !== 'number' ||
+    typeof fromLng !== 'number' ||
+    typeof toLat !== 'number' ||
+    typeof toLng !== 'number'
+  ) {
+    return null;
+  }
+  if (
+    !validateLatitude(fromLat) ||
+    !validateLongitude(fromLng) ||
+    !validateLatitude(toLat) ||
+    !validateLongitude(toLng)
+  ) {
+    return null;
+  }
+  const distanceKm = haversineDistance(
+    { latitude: fromLat, longitude: fromLng },
+    { latitude: toLat, longitude: toLng }
+  );
+  return Number.isFinite(distanceKm) ? distanceKm : null;
 }
 
 /**
