@@ -15,7 +15,9 @@ import { logger } from '../utils/logger';
 
 // Email type: the 10 PRD S17 notification events, so future Phase 13 wiring
 // can pass a notification's type straight through. No event handlers here.
-export type EmailType = NotificationType;
+// SEC-02 adds PASSWORD_RESET: transactional mail with no in-app notification.
+export const EMAIL_ONLY_TYPES = ['PASSWORD_RESET'] as const;
+export type EmailType = NotificationType | (typeof EMAIL_ONLY_TYPES)[number];
 
 const NO_CRLF = /[\r\n]/;
 const MAX_ADDRESS_LENGTH = 254;
@@ -41,7 +43,7 @@ const sendEmailSchema = z
       .refine((v) => !NO_CRLF.test(v), 'Subject must not contain line breaks'),
     html: z.string().min(1).max(MAX_HTML_LENGTH).optional(),
     text: z.string().min(1).max(MAX_TEXT_LENGTH).optional(),
-    type: z.nativeEnum(NotificationType),
+    type: z.union([z.nativeEnum(NotificationType), z.enum(EMAIL_ONLY_TYPES)]),
   })
   .refine((v) => v.html !== undefined || v.text !== undefined, {
     message: 'Either html or text body is required',

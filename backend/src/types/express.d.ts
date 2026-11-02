@@ -5,6 +5,8 @@ export interface AuthUser {
   email: string;
   role: Role;
   organizationId?: string | null;
+  /** SEC-03: session version at issue time (User.tokenVersion). */
+  tv?: number;
   iat?: number;
   exp?: number;
 }

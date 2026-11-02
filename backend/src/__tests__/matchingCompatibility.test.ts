@@ -325,11 +325,10 @@ describe('MATCH-02 scope guards (no later-task leakage)', () => {
     expect(code).not.toMatch(/getPrisma|PrismaClient/);
   });
 
-  it('is not wired into any route module (matches stays a placeholder)', () => {
-    const matchesRoute = readRepoFile('src', 'routes', 'matches.ts');
-    expect(matchesRoute).toMatch(/createPlaceholderRouter/);
-    expect(matchesRoute).not.toMatch(/matchingCompatibility|checkMatchingCompatibility/);
-    // Full route surface scan: only tests import the MATCH-02 module for now.
+  it('is consumed through the matching service, never directly by a route module', () => {
+    // MATCH-07 retired the placeholder; routes reach MATCH-02 only via the service.
+    const service = readRepoFile('src', 'services', 'matching.service.ts');
+    expect(service).toMatch(/checkMatchingCompatibility/);
     const routesDir = path.join(backendDir, 'src', 'routes');
     for (const file of fs.readdirSync(routesDir)) {
       const body = fs.readFileSync(path.join(routesDir, file), 'utf8');

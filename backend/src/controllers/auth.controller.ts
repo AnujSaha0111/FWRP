@@ -1,5 +1,13 @@
 import type { NextFunction, Request, Response } from 'express';
-import { adminResetPassword, changePassword, loginUser, refreshUser, registerUser } from '../services/auth.service';
+import {
+  adminResetPassword,
+  changePassword,
+  issueSession,
+  loginUser,
+  refreshUser,
+  registerUser,
+} from '../services/auth.service';
+import { requestPasswordReset, resetPassword } from '../services/passwordReset.service';
 import { AppError } from '../middleware/error';
 import { env, getExpiryThresholdMs } from '../config/env';
 
@@ -95,6 +103,9 @@ export async function changePasswordHandler(req: Request, res: Response, next: N
       return next(new AppError(401, 'UNAUTHORIZED', 'Authentication required'));
     }
     const result = await changePassword(userId, req.body);
+    // SEC-03: the change revoked all sessions; keep this device signed in.
+    const session = await issueSession(userId);
+    if (session) setAuthCookies(res, session.accessToken, session.refreshToken);
     res.status(200).json({ success: true, data: result });
   } catch (err) {
     next(err);
@@ -110,6 +121,27 @@ export async function adminResetHandler(req: Request, res: Response, next: NextF
       return next(new AppError(401, 'UNAUTHORIZED', 'Authentication required'));
     }
     const result = await adminResetPassword(adminId, req.params.id, req.body);
+    res.status(200).json({ success: true, data: result });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// SEC-02: self-service password reset. The forgot answer is identical for
+// known and unknown emails (202) so accounts cannot be enumerated.
+export async function forgotPasswordHandler(req: Request, res: Response, next: NextFunction) {
+  try {
+    res.status(202).json({ success: true, data: await requestPasswordReset(req.body) });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function resetPasswordHandler(req: Request, res: Response, next: NextFunction) {
+  try {
+    const result = await resetPassword(req.body);
+    // Any cookies on this browser belong to a revoked session.
+    clearAuthCookies(res);
     res.status(200).json({ success: true, data: result });
   } catch (err) {
     next(err);

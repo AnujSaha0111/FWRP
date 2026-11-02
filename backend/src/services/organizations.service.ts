@@ -5,6 +5,7 @@ import { AppError } from '../middleware/error';
 import { formatZodError } from '../middleware/validate';
 import { getPrisma } from '../lib/prisma';
 import { persistAuditEvent } from './audit.service';
+import { refreshMatchesSafely } from './matching.service';
 import { createNotification } from './notification.service';
 import { paginate, parsePagination, type PaginationResult } from '../utils/pagination';
 
@@ -32,13 +33,36 @@ export const updateOrganizationSchema = z
       .min(1, 'Contact information must be non-empty')
       .max(MAX_CONTACT_LENGTH)
       .optional(),
+    // Location correction (moved premises, wrong pin). Always as a pair.
+    latitude: z.number({ invalid_type_error: 'latitude must be a number' }).finite().min(-90).max(90).optional(),
+    longitude: z.number({ invalid_type_error: 'longitude must be a number' }).finite().min(-180).max(180).optional(),
   })
   .strict()
   .refine(
     (value) =>
-      value.name !== undefined || value.address !== undefined || value.contactInformation !== undefined,
-    { message: 'At least one of name, address, contactInformation is required', path: ['name'] },
-  );
+      value.name !== undefined ||
+      value.address !== undefined ||
+      value.contactInformation !== undefined ||
+      value.latitude !== undefined ||
+      value.longitude !== undefined,
+    { message: 'At least one of name, address, contactInformation, latitude/longitude is required', path: ['name'] },
+  )
+  .superRefine((value, ctx) => {
+    if ((value.latitude === undefined) !== (value.longitude === undefined)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [value.latitude === undefined ? 'latitude' : 'longitude'],
+        message: 'latitude and longitude must be provided together',
+      });
+    }
+    if (value.latitude === 0 && value.longitude === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['latitude'],
+        message: 'Coordinates 0, 0 are not a real organization location',
+      });
+    }
+  });
 
 export type UpdateOrganizationInput = z.input<typeof updateOrganizationSchema>;
 
@@ -160,13 +184,19 @@ export async function updateMyOrganization(
   });
   const existing = requireOwnOrganization(user);
 
-  const data: { name?: string; address?: string; contactInformation?: string } = {};
+  const data: { name?: string; address?: string; contactInformation?: string; latitude?: number; longitude?: number } = {};
   if (parsed.data.name !== undefined) data.name = parsed.data.name;
   if (parsed.data.address !== undefined) data.address = parsed.data.address;
   if (parsed.data.contactInformation !== undefined) data.contactInformation = parsed.data.contactInformation;
+  if (parsed.data.latitude !== undefined && parsed.data.longitude !== undefined) {
+    data.latitude = parsed.data.latitude;
+    data.longitude = parsed.data.longitude;
+  }
+  const moved =
+    data.latitude !== undefined && (data.latitude !== existing.latitude || data.longitude !== existing.longitude);
 
   try {
-    return await client.$transaction(async (tx) => {
+    const profile = await client.$transaction(async (tx) => {
       const organization = await tx.organization.update({
         where: { id: existing.id },
         data,
@@ -177,15 +207,48 @@ export async function updateMyOrganization(
           action: 'ORGANIZATION_UPDATE',
           entityType: 'Organization',
           entityId: existing.id,
-          oldValue: { id: existing.id, name: existing.name, address: existing.address },
-          newValue: { id: organization.id, name: organization.name, address: organization.address },
+          oldValue: {
+            id: existing.id,
+            name: existing.name,
+            address: existing.address,
+            ...(moved ? { latitude: existing.latitude, longitude: existing.longitude } : {}),
+          },
+          newValue: {
+            id: organization.id,
+            name: organization.name,
+            address: organization.address,
+            ...(moved ? { latitude: organization.latitude, longitude: organization.longitude } : {}),
+          },
         },
         tx,
       );
       return toOrganizationProfile(organization);
     });
+    // MATCH-06: distances changed, so re-score this organization's matches (best-effort).
+    if (moved) await refreshOrganizationMatches(client, existing.id);
+    return profile;
   } catch (err) {
     throw mapOrganizationError(err, 'update');
+  }
+}
+
+async function refreshOrganizationMatches(client: PrismaClient, organizationId: string): Promise<void> {
+  try {
+    const [requirements, donations] = await Promise.all([
+      client.requirement.findMany({
+        where: { organizationId, status: { in: ['OPEN', 'PARTIALLY_FULFILLED'] } },
+        select: { id: true },
+      }),
+      // Donations without their own pickup coordinates use the provider organization location.
+      client.donation.findMany({
+        where: { provider: { organizationId }, status: { in: ['AVAILABLE', 'MATCHED'] }, pickupLatitude: null },
+        select: { id: true },
+      }),
+    ]);
+    for (const r of requirements) await refreshMatchesSafely('requirement', r.id);
+    for (const d of donations) await refreshMatchesSafely('donation', d.id);
+  } catch {
+    // Never fail the profile update; the scheduled refresh (MATCH-11) catches up.
   }
 }
 

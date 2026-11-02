@@ -50,6 +50,7 @@ function installStatefulPrisma() {
           id: `user-${++seq}`,
           status: 'ACTIVE',
           organizationId: null,
+          tokenVersion: 0,
           createdAt: new Date(),
           updatedAt: new Date(),
           ...args.data,

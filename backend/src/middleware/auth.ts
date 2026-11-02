@@ -14,6 +14,7 @@ export function validateAuthClaims(decoded: unknown): decoded is AuthUser {
   if (typeof d.email !== 'string' || d.email.trim() === '') return false;
   if (typeof d.role !== 'string' || !ALLOWED_ROLES.has(d.role)) return false;
   if (d.organizationId !== undefined && d.organizationId !== null && typeof d.organizationId !== 'string') return false;
+  if (d.tv !== undefined && (typeof d.tv !== 'number' || !Number.isInteger(d.tv) || d.tv < 0)) return false;
   if (d.iat !== undefined && typeof d.iat !== 'number') return false;
   if (d.exp !== undefined && typeof d.exp !== 'number') return false;
   return true;

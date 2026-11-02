@@ -7,8 +7,11 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  // Supabase: DATABASE_URL = transaction pooler (6543, ?pgbouncer=true) for runtime;
+  // DIRECT_URL = session pooler (5432) used by `prisma migrate`.
+  directUrl = env("DIRECT_URL")
 }
 
 // D-04: exactly four MVP roles, single role per user
@@ -118,6 +121,8 @@ enum NotificationType {
   CONFIRMATION_PENDING
   ORGANIZATION_VERIFIED
   ORGANIZATION_REJECTED
+  // ADMIN-03: reporter notice when an admin updates their incident.
+  INCIDENT_UPDATED
 }
 
 model User {
@@ -164,6 +169,27 @@ model User {
 
   // DB-09: 1 User → N AuditLogs (userId FK on AuditLog) — nullable for system actions; back-relation for audit trail
   auditLogs AuditLog[]
+
+  // REQ-06: 1 User (actor) → N RequirementHistory entries (nullable actorId, SET NULL on delete)
+  requirementHistory RequirementHistory[]
+
+  // LOG-01: 1 Volunteer User → N availability windows
+  volunteerAvailability VolunteerAvailability[]
+
+  // SEC-03: session version. Embedded in issued tokens; bumping it (password
+  // change/reset, suspension, deletion) invalidates every refresh token.
+  tokenVersion Int @default(0) @map("token_version")
+
+  // SEC-02: password reset tokens (hashed)
+  passwordResetTokens PasswordResetToken[]
+
+  // ADMIN-03: incidents filed by / about / resolved by this user
+  incidentsReported Incident[] @relation("IncidentReporter")
+  incidentsAbout    Incident[] @relation("IncidentSubject")
+  incidentsResolved Incident[] @relation("IncidentResolver")
+
+  // ADMIN-04: settings last changed by this admin
+  settingsUpdated SystemSetting[]
 
   @@index([role])
   @@index([organizationId])
@@ -271,6 +297,9 @@ model Donation {
   // DB-07: 1 Donation → N Deliveries (donationId FK on Delivery) — allows reassignment per DB-10 (1:1 or 1:N)
   deliveries Delivery[]
 
+  // REQ-08: 1 Donation → N Allocations (committed quantity reservations)
+  allocations Allocation[]
+
   // DB-03 indexes per checklist: provider_id, status, category, available_until, created_at
   @@index([providerId])
   @@index([status])
@@ -321,6 +350,12 @@ model Requirement {
 
   // DB-06: 1 Requirement → N Matches (requirementId FK on Match)
   matches Match[]
+
+  // REQ-06: 1 Requirement → N immutable history snapshots
+  history RequirementHistory[]
+
+  // REQ-08: 1 Requirement → N Allocations
+  allocations Allocation[]
 
   // DB-04 indexes per checklist: organization_id, status, priority, required_by
   @@index([organizationId])
@@ -432,6 +467,19 @@ model Delivery {
   // PRD §24.6 notes — optional
   notes String?
 
+  // LOG-04: volunteer declined the assignment; row stays ASSIGNED until an admin
+  // reassigns it (docs/database.md §11.3 ASSIGNED → ASSIGNED). Cleared on reassignment.
+  declinedAt    DateTime? @map("declined_at")
+  declineReason String?   @map("decline_reason")
+
+  // DELCONF-01: provider confirmed the handover at pickup (PRD §7.1).
+  handoverConfirmedAt DateTime? @map("handover_confirmed_at")
+
+  // DELCONF-02: recipient confirmation of receipt (FR-15).
+  confirmedAt      DateTime? @map("confirmed_at")
+  quantityReceived Float?    @map("quantity_received")
+  receiverName     String?   @map("receiver_name")
+
   // Timestamps — UTC
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -469,7 +517,18 @@ model Notification {
   createdAt DateTime @default(now()) @map("created_at")
 
   // DB-08 index per checklist: (user_id, is_read, created_at)
+  // NOTIF-05: related record (e.g. Donation/Delivery/Match id) for deep links and
+  // reminder de-duplication. Optional: org notices and legacy rows have none.
+  entityType String? @map("entity_type")
+  entityId   String? @map("entity_id")
+
+  // NOTIF-06: email outbox state. Set after a successful send; attempts cap retries.
+  emailedAt     DateTime? @map("emailed_at")
+  emailAttempts Int       @default(0) @map("email_attempts")
+
   @@index([userId, isRead, createdAt])
+  @@index([entityType, entityId])
+  @@index([emailedAt, createdAt])
   @@map("notifications")
 }
 
@@ -509,4 +568,164 @@ model AuditLog {
   @@index([timestamp])
   @@index([entityType, entityId])
   @@map("audit_logs")
+}
+
+// REQ-06/REQ-07: RequirementHistory action — CREATE, UPDATE, CANCEL
+enum RequirementHistoryAction {
+  CREATE
+  UPDATE
+  CANCEL
+}
+
+// REQ-06: immutable requirement snapshots (migrations 20260920000004/5).
+// organizationId is a logical (non-FK) reference, matching the migration.
+model RequirementHistory {
+  id String @id @default(cuid()) @map("history_id")
+
+  requirementId String      @map("requirement_id")
+  requirement   Requirement @relation(fields: [requirementId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  organizationId String @map("organization_id")
+
+  actorId String? @map("actor_id")
+  actor   User?   @relation(fields: [actorId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  action            RequirementHistoryAction
+  foodCategory      String                   @map("food_category")
+  foodType          String                   @map("food_type")
+  quantityRequired  Float                    @map("quantity_required")
+  quantityFulfilled Float                    @map("quantity_fulfilled")
+  requiredBy        DateTime                 @map("required_by")
+  priority          Priority
+  location          String
+  status            RequirementStatus
+  timestamp         DateTime                 @default(now())
+
+  @@index([requirementId])
+  @@index([organizationId, timestamp])
+  @@index([timestamp])
+  @@map("requirement_history")
+}
+
+// REQ-08 / D-06 Model A: committed quantity reservation of a donation for a requirement (migration 20260920000006).
+// Invariants (committedQuantity > 0, SUM per donation <= donation.quantity) are enforced in allocations.service.
+model Allocation {
+  id String @id @default(cuid()) @map("allocation_id")
+
+  donationId String   @map("donation_id")
+  donation   Donation @relation(fields: [donationId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  requirementId String      @map("requirement_id")
+  requirement   Requirement @relation(fields: [requirementId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  committedQuantity Float @map("committed_quantity")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([donationId])
+  @@index([requirementId])
+  @@map("allocations")
+}
+
+// LOG-01: volunteer availability windows (PRD §7.3 "Maintain availability").
+// Volunteers are Users with Role.VOLUNTEER (D-04); no separate Volunteer model.
+// Used by assignment (FR-12) and the matching transport component.
+model VolunteerAvailability {
+  id String @id @default(cuid()) @map("availability_id")
+
+  volunteerId String @map("volunteer_id")
+  volunteer   User   @relation(fields: [volunteerId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  availableFrom  DateTime @map("available_from")
+  availableUntil DateTime @map("available_until")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([volunteerId])
+  @@index([availableUntil])
+  @@map("volunteer_availability")
+}
+
+// SEC-02: single-use password reset token. Only the SHA-256 hash is stored;
+// the raw token exists only in the emailed link.
+model PasswordResetToken {
+  id String @id @default(cuid()) @map("reset_token_id")
+
+  userId String @map("user_id")
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("password_reset_tokens")
+}
+
+// ADMIN-03: reported accounts and disputes (PRD §7.4).
+enum IncidentType {
+  ACCOUNT_REPORT
+  DISPUTE
+}
+
+enum IncidentStatus {
+  OPEN
+  UNDER_REVIEW
+  RESOLVED
+  DISMISSED
+}
+
+model Incident {
+  id String @id @default(cuid()) @map("incident_id")
+
+  type   IncidentType
+  status IncidentStatus @default(OPEN)
+
+  reporterId String @map("reporter_id")
+  reporter   User   @relation("IncidentReporter", fields: [reporterId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  // ACCOUNT_REPORT: the reported user (required). DISPUTE: optional counterparty.
+  subjectUserId String? @map("subject_user_id")
+  subjectUser   User?   @relation("IncidentSubject", fields: [subjectUserId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  // DISPUTE: the donation (and optionally delivery) in dispute. Logical references
+  // (no FK) so incident history survives donation clean-up, like AuditLog.
+  donationId String? @map("donation_id")
+  deliveryId String? @map("delivery_id")
+
+  reason      String
+  description String
+
+  resolution   String?
+  resolvedById String?   @map("resolved_by_id")
+  resolvedBy   User?     @relation("IncidentResolver", fields: [resolvedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  resolvedAt   DateTime? @map("resolved_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([status, createdAt])
+  @@index([type])
+  @@index([reporterId])
+  @@index([subjectUserId])
+  @@index([donationId])
+  @@map("incidents")
+}
+
+// ADMIN-04: administrator-configurable system parameters (PRD §7.4). Keys and
+// value schemas are defined in services/settings.service.ts; absent keys use
+// their defaults.
+model SystemSetting {
+  key   String @id
+  value Json
+
+  updatedById String?  @map("updated_by_id")
+  updatedBy   User?    @relation(fields: [updatedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("system_settings")
 }

@@ -54,7 +54,7 @@ describe('BE-NOTIF-04 transactional create + rollback (simulated)', () => {
     expect(data.userId).toBe('user-1');
     expect(data.type).toBe('DONATION_ACCEPTED');
     expect(data.title).toBe('Donation accepted');
-    expect(data).not.toHaveProperty('entityType');
+    expect(data).toHaveProperty('entityType');
     expect(outcome.result).toMatchObject({ userId: 'user-1', isRead: false });
   });
 
@@ -112,6 +112,12 @@ describe('BE-NOTIF-04 transactional create + rollback (simulated)', () => {
       '20260920000005_requirement_history_cancel',
       // REQ-08 (authoritative): additive Allocation representation.
       '20260920000006_allocation',
+      // LOG-01/DELCONF (authoritative): additive volunteer availability + delivery fields.
+      '20261103000007_logistics',
+      // NOTIF-05/06 (authoritative): additive notification entity + email outbox columns.
+      '20261103000008_notification_entity_outbox',
+      // SEC/ADMIN (authoritative): additive reset tokens, session version, incidents, settings.
+      '20261103000009_admin_security',
     ]);
     const init = fs.readFileSync(path.join(dir, entries[0], 'migration.sql'), 'utf8');
     const checks = fs.readFileSync(path.join(dir, entries[1], 'migration.sql'), 'utf8');

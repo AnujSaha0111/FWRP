@@ -90,6 +90,8 @@ const registerBody = {
   role: 'PROVIDER',
   orgName: 'Good Food Org',
   address: '12 Market Street',
+  latitude: 12.97,
+  longitude: 77.59,
 };
 
 beforeEach(() => {

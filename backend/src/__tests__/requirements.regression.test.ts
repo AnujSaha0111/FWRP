@@ -21,7 +21,8 @@ const testDir = path.dirname(fileURLToPath(import.meta.url));
 const backendDir = path.join(testDir, '..', '..');
 
 function readRepoFile(...parts: string[]): string {
-  return fs.readFileSync(path.join(backendDir, ...parts), 'utf8');
+  // Normalize CRLF so source assertions hold on Windows checkouts (core.autocrlf).
+  return fs.readFileSync(path.join(backendDir, ...parts), 'utf8').replace(/\r\n/g, '\n');
 }
 
 function productionTsFiles(): string[] {
@@ -247,22 +248,26 @@ describe('REQ-09 cross-feature requirement lifecycle regression', () => {
   });
 });
 
-describe('REQ-09 delivery/fulfillment boundary (deferred to Phase 11)', () => {
-  it('has no delivery-confirmation service or route', () => {
-    expect(fs.existsSync(path.join(backendDir, 'src', 'services', 'delivery.service.ts'))).toBe(false);
-    expect(filesMatching(/confirmDelivery|deliveryService|deliveries\/:id\/confirm/)).toEqual([]);
-    // The deliveries router must remain the BE-04 placeholder (Phase 10-11).
-    expect(readRepoFile('src', 'routes', 'deliveries.ts')).toContain('createPlaceholderRouter');
+describe('REQ-09 delivery/fulfillment boundary (owned by DELCONF, Phase 11)', () => {
+  it('delivery confirmation lives only in the delivery service and route', () => {
+    expect(fs.existsSync(path.join(backendDir, 'src', 'services', 'delivery.service.ts'))).toBe(true);
+    expect(filesMatching(/confirmReceipt/)).toEqual([
+      'src/controllers/deliveries.controller.ts',
+      'src/routes/deliveries.ts',
+      'src/services/delivery.service.ts',
+    ]);
+    expect(readRepoFile('src', 'routes', 'deliveries.ts')).toContain("'/:id/confirm'");
   });
 
-  it('has no production path that mutates quantityFulfilled or donation COMPLETED', () => {
+  it('only delivery confirmation completes donations or mutates quantityFulfilled', () => {
     // No persisted remaining-quantity concept anywhere in production
     // (`quantity_fulfilled` is a legitimate public API projection field name).
     expect(filesMatching(/quantity_remaining|quantityRemaining/)).toEqual([]);
-    // No donation completion transition exists yet (Phase 11 owns it).
-    expect(filesMatching(/status:\s*'COMPLETED'/)).toEqual([]);
-    // The existing quantityFulfilled references are reads/selects/types only.
-    expect(quantityFulfilledWriteOffenders()).toEqual([]);
+    // COMPLETED appears only in delivery confirmation (guarded write + its audit payload).
+    expect(filesMatching(/status:\s*'COMPLETED'/)).toEqual(['src/services/delivery.service.ts']);
+    // Fulfilment writes exist only in delivery confirmation (DELCONF-03).
+    const writers = new Set(quantityFulfilledWriteOffenders().map((o) => o.split(' => ')[0]));
+    expect([...writers]).toEqual(['src/services/delivery.service.ts']);
     // Allocation never writes a requirement status/quantity.
     const alloc = readRepoFile('src', 'services', 'allocations.service.ts');
     expect(alloc).not.toContain('quantityFulfilled:');

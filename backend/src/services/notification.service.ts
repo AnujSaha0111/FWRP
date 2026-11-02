@@ -7,8 +7,9 @@ import { getPrisma } from '../lib/prisma';
 import { parsePagination, paginate, type PaginationResult } from '../utils/pagination';
 
 // BE-NOTIF-02: central notification service/interface foundation.
-// Uses the DB-08 Prisma Notification model only. No email/SMTP, no routes,
-// no business-event wiring (Phase 13), no outbox/queue (explicitly future work).
+// Uses the DB-08 Prisma Notification model only. No email/SMTP here: the email
+// outbox lives in notificationDispatch.service.ts (NOTIF-06) and routes in
+// routes/notifications.ts (NOTIF-01).
 
 export type NotificationPersistenceClient = Pick<PrismaClient, 'notification'>;
 
@@ -40,8 +41,7 @@ const createNotificationSchema = z.object({
   type: z.nativeEnum(NotificationType),
   title: z.string().trim().min(1, 'title is required').max(MAX_TITLE_LENGTH),
   message: z.string().trim().min(1, 'message is required').max(MAX_MESSAGE_LENGTH),
-  // Accepted for caller context (BE-NOTIF-02 contract) but NOT persisted:
-  // the DB-08 Notification schema has no entity columns by design.
+  // NOTIF-05: related record, persisted for deep links and reminder de-duplication.
   entityType: z.string().trim().min(1).max(100).optional(),
   entityId: z.string().trim().min(1).max(255).optional(),
 });
@@ -51,6 +51,8 @@ export type CreateNotificationInput = z.input<typeof createNotificationSchema>;
 export interface ListNotificationsOptions {
   page?: string | number;
   limit?: string | number;
+  /** NOTIF-01: only unread rows. */
+  unreadOnly?: boolean;
 }
 
 export interface MarkAllAsReadResult {
@@ -120,9 +122,11 @@ export async function createNotification(
   }
   const client: NotificationPersistenceClient =
     resolveNotificationClient(txOrOptions) ?? getPrisma();
-  const { userId, type, title, message } = parsed.data;
+  const { userId, type, title, message, entityType, entityId } = parsed.data;
   try {
-    return await client.notification.create({ data: { userId, type, title, message } });
+    return await client.notification.create({
+      data: { userId, type, title, message, entityType: entityType ?? null, entityId: entityId ?? null },
+    });
   } catch (err) {
     throw mapNotificationError(err, 'create');
   }
@@ -142,7 +146,7 @@ export async function listNotifications(
   });
   const client: NotificationPersistenceClient =
     resolveNotificationClient(txOrOptions) ?? getPrisma();
-  const where = { userId: ownerId };
+  const where = options?.unreadOnly ? { userId: ownerId, isRead: false } : { userId: ownerId };
   try {
     const [total, items] = await Promise.all([
       client.notification.count({ where }),

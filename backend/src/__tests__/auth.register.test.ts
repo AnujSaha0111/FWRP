@@ -24,6 +24,8 @@ const providerInput = {
   role: 'PROVIDER' as const,
   orgName: 'Good Food Org',
   address: '12 Market Street',
+  latitude: 12.97,
+  longitude: 77.59,
 };
 
 function createMockPrisma() {
@@ -79,8 +81,8 @@ describe('AUTH-01 registerUser service', () => {
         name: 'Good Food Org',
         type: 'OTHER',
         address: '12 Market Street',
-        latitude: 0,
-        longitude: 0,
+        latitude: 12.97,
+        longitude: 77.59,
       },
     });
     expect(userCreate).toHaveBeenCalledTimes(1);
@@ -148,6 +150,14 @@ describe('AUTH-01 registerUser service', () => {
       { ...providerInput, role: 'ADMIN' },
       { ...providerInput, role: 'BOGUS' },
       { ...providerInput, name: '' },
+      // Organization location is required and never defaulted (D-07).
+      { ...providerInput, latitude: undefined },
+      { ...providerInput, longitude: undefined },
+      { ...providerInput, latitude: undefined, longitude: undefined },
+      { ...providerInput, role: 'RECIPIENT', latitude: undefined, longitude: undefined },
+      { ...providerInput, latitude: 0, longitude: 0 },
+      { ...providerInput, latitude: 91 },
+      { ...providerInput, longitude: '77.5' },
       {},
     ];
     for (const input of cases) {
@@ -160,6 +170,13 @@ describe('AUTH-01 registerUser service', () => {
         expect((e as AppError).code).toBe('VALIDATION_ERROR');
       }
     }
+  });
+
+  it('volunteers register without coordinates (no organization)', async () => {
+    const { orgCreate } = createMockPrisma();
+    const { orgName: _o, address: _a, latitude: _lat, longitude: _lng, ...rest } = providerInput;
+    await registerUser({ ...rest, role: 'VOLUNTEER' });
+    expect(orgCreate).not.toHaveBeenCalled();
   });
 
   it('invalid input never reaches the database', async () => {

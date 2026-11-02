@@ -1,7 +1,16 @@
 import express from 'express';
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+// SEC-03: refresh looks the account up — mock the global Prisma client.
+vi.mock('../lib/prisma', () => ({
+  getPrisma: vi.fn(),
+  getPrismaIfConfigured: vi.fn(() => null),
+}));
+
+import type { PrismaClient } from '@prisma/client';
+import { getPrisma } from '../lib/prisma';
 import { createApp } from '../app';
 import { refreshUser } from '../services/auth.service';
 import { signRefreshToken } from '../utils/jwt';
@@ -9,10 +18,20 @@ import { authenticate } from '../middleware/auth';
 import { errorMiddleware } from '../middleware/error';
 import { env } from '../config/env';
 
-// AUTH-05: refresh rotation only. Stateless: no database, no session store.
-// Later AUTH tasks own reset/profile; no notification wiring.
+// AUTH-05: refresh rotation. SEC-03: one account lookup per refresh — the
+// user must be ACTIVE and the token's session version must be current.
 
 const CLAIMS = { id: 'user-1', email: 'alice@example.com', role: 'PROVIDER' as const, organizationId: 'org-1' };
+
+function mockAccount(overrides: Record<string, unknown> = {}) {
+  const findUnique = vi.fn(async () => ({ ...CLAIMS, status: 'ACTIVE', tokenVersion: 0, ...overrides }));
+  vi.mocked(getPrisma).mockReturnValue({ user: { findUnique } } as unknown as PrismaClient);
+  return findUnique;
+}
+
+beforeEach(() => {
+  mockAccount();
+});
 
 function expiredRefreshToken(): string {
   return jwt.sign(
@@ -31,6 +50,40 @@ function agedRefreshToken(): string {
     { algorithm: 'HS256', expiresIn: '7d' },
   );
 }
+
+describe('SEC-03 session revocation on refresh', () => {
+  it('rejects suspended or deleted accounts', async () => {
+    for (const status of ['SUSPENDED', 'DELETED']) {
+      mockAccount({ status });
+      await expect(refreshUser(signRefreshToken(CLAIMS))).rejects.toMatchObject({ statusCode: 401 });
+    }
+  });
+
+  it('rejects tokens from a superseded session version', async () => {
+    mockAccount({ tokenVersion: 2 });
+    await expect(refreshUser(signRefreshToken({ ...CLAIMS, tv: 1 }))).rejects.toMatchObject({ statusCode: 401 });
+    const ok = await refreshUser(signRefreshToken({ ...CLAIMS, tv: 2 }));
+    expect((jwt.decode(ok.refreshToken) as { tv: number }).tv).toBe(2);
+  });
+
+  it('treats tokens issued before session versions as version 0', async () => {
+    mockAccount({ tokenVersion: 0 });
+    await expect(refreshUser(signRefreshToken(CLAIMS))).resolves.toBeDefined();
+    mockAccount({ tokenVersion: 1 });
+    await expect(refreshUser(signRefreshToken(CLAIMS))).rejects.toMatchObject({ statusCode: 401 });
+  });
+
+  it('re-issues claims from the current account (role/organization changes apply)', async () => {
+    mockAccount({ role: 'ADMIN', organizationId: null });
+    const result = await refreshUser(signRefreshToken(CLAIMS));
+    expect(result.user).toEqual({ id: 'user-1', email: 'alice@example.com', role: 'ADMIN', organizationId: null });
+  });
+
+  it('rejects unknown accounts', async () => {
+    vi.mocked(getPrisma).mockReturnValue({ user: { findUnique: vi.fn(async () => null) } } as unknown as PrismaClient);
+    await expect(refreshUser(signRefreshToken(CLAIMS))).rejects.toMatchObject({ statusCode: 401 });
+  });
+});
 
 describe('AUTH-05 refreshUser service', () => {
   it('rotates a valid refresh token into a fresh pair with identical claims', async () => {

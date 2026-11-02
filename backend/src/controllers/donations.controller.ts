@@ -18,7 +18,10 @@ export async function acceptDonationHandler(req: Request, res: Response, next: N
       return next(new AppError(401, 'UNAUTHORIZED', 'Authentication required'));
     }
     const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
-    const result = await acceptDonation(id, userId);
+    // ACCEPT-01: optional requirementId links the acceptance to a requirement
+    // (allocation + match outcome). Nothing else in the body is trusted.
+    const body = (req.body ?? {}) as { requirementId?: unknown };
+    const result = await acceptDonation(id, userId, body.requirementId);
     res.status(200).json({ success: true, data: result });
   } catch (err) {
     next(err);

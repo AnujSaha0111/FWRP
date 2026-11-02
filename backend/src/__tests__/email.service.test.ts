@@ -104,7 +104,7 @@ describe('BE-NOTIF-03 send + validation', () => {
     expect(provider.getCaptured()).toHaveLength(0);
   });
 
-  it('rejects an invalid email type but accepts all 12 event types (10 PRD + 2 ORG-03)', async () => {
+  it('rejects an invalid email type but accepts every notification type plus PASSWORD_RESET', async () => {
     const { provider, service } = mockService();
     await expect(service.send({ ...validInput, type: 'BOGUS' as never })).rejects.toMatchObject({
       statusCode: 400,
@@ -113,7 +113,8 @@ describe('BE-NOTIF-03 send + validation', () => {
     for (const type of Object.values(NotificationType)) {
       await service.send({ ...validInput, type });
     }
-    expect(provider.getCaptured()).toHaveLength(12);
+    await service.send({ ...validInput, type: 'PASSWORD_RESET' });
+    expect(provider.getCaptured()).toHaveLength(Object.values(NotificationType).length + 1);
   });
 });
 

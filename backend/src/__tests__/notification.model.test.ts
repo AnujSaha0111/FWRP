@@ -17,6 +17,8 @@ const EXPECTED_TYPES = [
   'CONFIRMATION_PENDING',
   'ORGANIZATION_VERIFIED',
   'ORGANIZATION_REJECTED',
+  // ADMIN-03: reporter/admin notice for incident (report/dispute) updates.
+  'INCIDENT_UPDATED',
 ] as const;
 
 const EXPECTED_MODELS = [
@@ -33,6 +35,12 @@ const EXPECTED_MODELS = [
   'RequirementHistory',
   // REQ-08 / D-06 (authoritative): dedicated allocation representation.
   'Allocation',
+  // LOG-01 (authoritative): volunteer availability windows.
+  'VolunteerAvailability',
+  // SEC-02 / ADMIN-03 / ADMIN-04 (authoritative).
+  'PasswordResetToken',
+  'Incident',
+  'SystemSetting',
 ];
 
 const testDir = path.dirname(fileURLToPath(import.meta.url));
@@ -125,10 +133,11 @@ describe('BE-NOTIF-01 Notification model/schema wiring', () => {
   it('introduces no speculative models; model/enum counts unchanged', () => {
     const models = Prisma.dmmf.datamodel.models.map((m) => m.name).sort();
     expect(models).toEqual([...EXPECTED_MODELS].sort());
-    // 9 DB models + REQ-06 RequirementHistory + REQ-08 Allocation.
-    expect(Prisma.dmmf.datamodel.models).toHaveLength(11);
+    // 9 DB models + REQ-06 RequirementHistory + REQ-08 Allocation + LOG-01 VolunteerAvailability.
+    expect(Prisma.dmmf.datamodel.models).toHaveLength(15);
     // 10 enums + REQ-06 RequirementHistoryAction.
-    expect(Prisma.dmmf.datamodel.enums).toHaveLength(11);
+    // + ADMIN-03 IncidentType and IncidentStatus.
+    expect(Prisma.dmmf.datamodel.enums).toHaveLength(13);
     for (const banned of ['DonationAllocation', 'Outbox', 'Volunteer', 'EmailLog', 'NotificationPreference']) {
       expect(models).not.toContain(banned);
     }
@@ -162,15 +171,18 @@ describe('BE-NOTIF-01 Notification model/schema wiring', () => {
     expect(sql).not.toContain('down.sql');
   });
 
-  it('adds no service, email, or instrumentation code (BE-NOTIF-02/03/04 out of scope)', () => {
+  it('keeps notification responsibilities in their own modules', () => {
     const services = fs.readdirSync(path.join(backendDir, 'src', 'services'));
-    expect(services).toEqual(['allocations.service.ts', 'audit.service.ts', 'auth.service.ts', 'donations.service.ts', 'email.service.ts', 'notification.service.ts', 'organizations.service.ts', 'requirements.service.ts', 'users.service.ts']);
-    // BE-04 owns route structure: notifications.ts exists but must stay a
-    // placeholder with no service calls or business wiring.
+    expect([...services].sort()).toEqual(['admin.service.ts', 'allocations.service.ts', 'analytics.service.ts', 'audit.service.ts', 'auth.service.ts', 'delivery.service.ts', 'donations.service.ts', 'email.service.ts', 'expiry.service.ts', 'incidents.service.ts', 'matching.service.ts', 'notification.service.ts', 'notificationAlerts.service.ts', 'notificationDispatch.service.ts', 'organizations.service.ts', 'passwordReset.service.ts', 'requirements.service.ts', 'settings.service.ts', 'users.service.ts', 'volunteers.service.ts']);
+    // NOTIF-01: the inbox router only reads/marks through the notification
+    // service; it never creates notifications or sends email.
     const routes = fs.readdirSync(path.join(backendDir, 'src', 'routes'));
     expect(routes).toContain('notifications.ts');
     const notifRoutes = readRepoFile('src', 'routes', 'notifications.ts');
-    expect(notifRoutes).not.toContain('../services');
+    expect(notifRoutes).toContain("'../services/notification.service'");
+    expect(notifRoutes).not.toMatch(/createNotification|email|Dispatch/);
+    // The core notification service stays email-free (outbox is separate).
+    expect(readRepoFile('src', 'services', 'notification.service.ts')).not.toMatch(/emailService|nodemailer/);
     const srcText = readRepoFile('src', 'services', 'audit.service.ts');
     expect(srcText).not.toContain('Notification');
   });

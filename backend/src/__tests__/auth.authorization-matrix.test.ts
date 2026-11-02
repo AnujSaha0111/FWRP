@@ -47,6 +47,7 @@ function mockDbForAuthFlows() {
     role: 'PROVIDER',
     organizationId: 'org-1',
     status: 'ACTIVE',
+    tokenVersion: 0,
     createdAt: new Date('2026-09-03T00:00:00.000Z'),
     updatedAt: new Date('2026-09-03T00:00:00.000Z'),
   };
@@ -164,6 +165,19 @@ describe('AUTH-07 role matrix: admin reset is ADMIN-only', () => {
 
 describe('AUTH-07 role matrix: refresh rotation is role-agnostic', () => {
   it.each(ROLES)('%s refresh token rotates successfully', async (role) => {
+    // SEC-03: refresh re-reads the account, which carries the role.
+    vi.mocked(getPrisma).mockReturnValue({
+      user: {
+        findUnique: vi.fn(async () => ({
+          id: `${role.toLowerCase()}-1`,
+          email: `${role.toLowerCase()}@example.com`,
+          role,
+          organizationId: null,
+          status: 'ACTIVE',
+          tokenVersion: 0,
+        })),
+      },
+    } as unknown as PrismaClient);
     const app = createApp();
     const refreshToken = signRefreshToken({
       id: `${role.toLowerCase()}-1`,
@@ -177,15 +191,17 @@ describe('AUTH-07 role matrix: refresh rotation is role-agnostic', () => {
   });
 });
 
-describe('AUTH-07 role matrix: future-domain placeholders stay ungated 501s for every role', () => {
-  it.each(['/api/notifications'])('%s answers 501 with or without any role', async (prefix) => {
-    const app = createApp();
-    const anon = await request(app).get(prefix);
-    expect(anon.status).toBe(501);
-    for (const role of ROLES) {
-      const res = await request(app).get(prefix).set('Authorization', `Bearer ${tokenFor(role)}`);
-      expect(res.status).toBe(501);
-      expect(res.body.error.code).toBe('NOT_IMPLEMENTED');
+describe('AUTH-07 role matrix: no domain route is an ungated placeholder', () => {
+  it.each(['/api/notifications', '/api/analytics/dashboard'])(
+    '%s rejects anonymous callers and never answers 501',
+    async (prefix) => {
+      const app = createApp();
+      const anon = await request(app).get(prefix);
+      expect(anon.status).toBe(401);
+      for (const role of ROLES) {
+        const res = await request(app).get(prefix).set('Authorization', `Bearer ${tokenFor(role)}`);
+        expect(res.status).not.toBe(501);
+      }
     }
-  });
+  );
 });

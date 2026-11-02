@@ -18,9 +18,25 @@ export const envSchema = z.object({
   SMTP_USER: z.string().optional().default(''),
   SMTP_PASS: z.string().optional().default(''),
   EMAIL_FROM: z.string().default('noreply@fwrp.local'),
+  // MATCH-06: matching radius (km). Pairs farther apart are not recommended.
+  MATCHING_MAX_DISTANCE_KM: z.coerce.number().positive().max(20000).default(50),
+  // MATCH-11: scheduled re-scoring interval in minutes; 0 disables the job.
+  MATCHING_REFRESH_INTERVAL_MINUTES: z.coerce.number().int().min(0).max(1440).default(15),
+  // NOTIF-04/06: time-based alerts + email outbox interval in minutes; 0 disables.
+  NOTIFICATION_JOB_INTERVAL_MINUTES: z.coerce.number().int().min(0).max(1440).default(1),
+  // EXP-01: automatic expiry interval in minutes; 0 disables.
+  EXPIRY_JOB_INTERVAL_MINUTES: z.coerce.number().int().min(0).max(1440).default(1),
+  // SEC-01: auth rate limiting. Defaults to on, except under NODE_ENV=test.
+  RATE_LIMIT_ENABLED: z.enum(['true', 'false']).optional(),
+  // SEC-01: Express "trust proxy" hops, so req.ip is the client behind a load balancer (0 = direct).
+  TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(10).default(0),
+  // SEC-02: frontend origin used in password-reset links.
+  APP_BASE_URL: z.string().url().default('http://localhost:5173'),
+  // SEC-02: password-reset link lifetime in minutes.
+  PASSWORD_RESET_TTL_MINUTES: z.coerce.number().int().min(5).max(1440).default(30),
 });
 
-type Env = z.infer<typeof envSchema>;
+type Env = Omit<z.infer<typeof envSchema>, 'RATE_LIMIT_ENABLED'> & { RATE_LIMIT_ENABLED: boolean };
 
 export function parseEnv(overrides: Record<string, unknown> = process.env): Env {
   const parsed = envSchema.safeParse(overrides);
@@ -28,7 +44,13 @@ export function parseEnv(overrides: Record<string, unknown> = process.env): Env 
     const details = parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
     throw new Error(`Invalid environment variables: ${details}`);
   }
-  return parsed.data;
+  return {
+    ...parsed.data,
+    RATE_LIMIT_ENABLED:
+      parsed.data.RATE_LIMIT_ENABLED === undefined
+        ? parsed.data.NODE_ENV !== 'test'
+        : parsed.data.RATE_LIMIT_ENABLED === 'true',
+  };
 }
 
 export const env: Env = parseEnv();

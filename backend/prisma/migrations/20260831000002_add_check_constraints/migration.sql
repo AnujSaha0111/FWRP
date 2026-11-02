@@ -1,4 +1,4 @@
-﻿-- Migration: 20260831000002_add_check_constraints
+-- Migration: 20260831000002_add_check_constraints
 -- Description: Adds 8 DB-12 CHECK constraints that Prisma 5.22 cannot express natively (see docs/database.md §12.2)
 -- Depends on: 20260831000001_init
 -- NOTE: This migration has NOT been applied. It adds the 8 CHECKs prepared for Supabase. DB-14 verification remains PENDING.

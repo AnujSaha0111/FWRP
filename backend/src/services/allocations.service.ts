@@ -77,6 +77,93 @@ function requirePositiveQuantity(value: unknown): number {
   return value;
 }
 
+type AllocationTx = Pick<PrismaClient, '$queryRaw' | 'requirement' | 'allocation'>;
+
+/**
+ * Locks the donation row (`SELECT ... FOR UPDATE`) inside the caller's
+ * transaction and returns its quantity and committed total. Callers that size
+ * an allocation from the remainder (ACCEPT-*) must read it through this lock.
+ */
+export async function lockDonationForAllocation(
+  tx: AllocationTx,
+  donationId: string
+): Promise<{ quantity: number; committed: number; remaining: number }> {
+  const locked = await tx.$queryRaw<Array<{ donation_id: string; quantity: number }>>`
+    SELECT "donation_id", "quantity" FROM "donations" WHERE "donation_id" = ${donationId} FOR UPDATE
+  `;
+  if (!Array.isArray(locked) || locked.length === 0) {
+    throw new AppError(404, 'NOT_FOUND', 'Donation not found');
+  }
+  const quantity = locked[0].quantity;
+  const sum = await tx.allocation.aggregate({
+    where: { donationId },
+    _sum: { committedQuantity: true },
+  });
+  const committed = sum._sum.committedQuantity ?? 0;
+  return { quantity, committed, remaining: quantity - committed };
+}
+
+/**
+ * Transaction-participating allocation: never opens its own transaction, so
+ * callers can combine it with status changes atomically. Enforces both
+ * invariants under the donation row lock.
+ */
+export interface LockedDonation {
+  quantity: number;
+  committed: number;
+}
+
+export async function allocateInTransaction(
+  tx: AllocationTx,
+  donationId: string,
+  requirementId: string,
+  quantity: number,
+  /**
+   * Pass the result of `lockDonationForAllocation` (same transaction) when the
+   * caller already holds the lock and has verified the requirement; skips the
+   * duplicate lock/lookup round trips. Invariants are still checked here.
+   */
+  locked?: LockedDonation
+): Promise<Allocation> {
+  requirePositiveQuantity(quantity);
+  let donationQuantity: number;
+  let alreadyCommitted: number;
+  if (locked) {
+    donationQuantity = locked.quantity;
+    alreadyCommitted = locked.committed;
+  } else {
+    // Lock the donation row (serialize concurrent allocations for this donation).
+    const rows = await tx.$queryRaw<Array<{ donation_id: string; quantity: number }>>`
+      SELECT "donation_id", "quantity" FROM "donations" WHERE "donation_id" = ${donationId} FOR UPDATE
+    `;
+    if (!Array.isArray(rows) || rows.length === 0) {
+      throw new AppError(404, 'NOT_FOUND', 'Donation not found');
+    }
+    donationQuantity = rows[0].quantity;
+
+    const requirement = await tx.requirement.findUnique({
+      where: { id: requirementId },
+      select: { id: true },
+    });
+    if (!requirement) {
+      throw new AppError(404, 'NOT_FOUND', 'Requirement not found');
+    }
+
+    const committed = await tx.allocation.aggregate({
+      where: { donationId },
+      _sum: { committedQuantity: true },
+    });
+    alreadyCommitted = committed._sum.committedQuantity ?? 0;
+  }
+  if (alreadyCommitted + quantity > donationQuantity) {
+    throw new AppError(409, 'CONFLICT', 'Allocation exceeds the donation available quantity');
+  }
+
+  return tx.allocation.create({
+    data: { donationId, requirementId, committedQuantity: quantity },
+  });
+}
+
 export async function allocateRequirement(input: unknown): Promise<AllocateResult> {
   const raw = (input ?? {}) as AllocateInput;
   const donationId = requireNonEmptyString(raw.donation_id, 'donation_id');
@@ -86,37 +173,9 @@ export async function allocateRequirement(input: unknown): Promise<AllocateResul
   const client: PrismaClient = getPrisma();
 
   try {
-    const allocation = await client.$transaction(async (tx) => {
-      // Lock the donation row (serialize concurrent allocations for this donation).
-      const locked = await tx.$queryRaw<Array<{ donation_id: string; quantity: number }>>`
-        SELECT "donation_id", "quantity" FROM "donations" WHERE "donation_id" = ${donationId} FOR UPDATE
-      `;
-      if (!Array.isArray(locked) || locked.length === 0) {
-        throw new AppError(404, 'NOT_FOUND', 'Donation not found');
-      }
-      const donationQuantity = locked[0].quantity;
-
-      const requirement = await tx.requirement.findUnique({
-        where: { id: requirementId },
-        select: { id: true },
-      });
-      if (!requirement) {
-        throw new AppError(404, 'NOT_FOUND', 'Requirement not found');
-      }
-
-      const committed = await tx.allocation.aggregate({
-        where: { donationId },
-        _sum: { committedQuantity: true },
-      });
-      const alreadyCommitted = committed._sum.committedQuantity ?? 0;
-      if (alreadyCommitted + quantity > donationQuantity) {
-        throw new AppError(409, 'CONFLICT', 'Allocation exceeds the donation available quantity');
-      }
-
-      return tx.allocation.create({
-        data: { donationId, requirementId, committedQuantity: quantity },
-      });
-    });
+    const allocation = await client.$transaction((tx) =>
+      allocateInTransaction(tx, donationId, requirementId, quantity)
+    );
     return { allocation: toAllocationProfile(allocation) };
   } catch (err) {
     throw mapAllocationError(err);

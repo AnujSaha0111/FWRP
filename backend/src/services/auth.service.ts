@@ -60,10 +60,11 @@ export const registerSchema = z
     orgName: z.string().trim().min(1).max(MAX_NAME_LENGTH).optional(),
     address: z.string().trim().min(1).max(MAX_ADDRESS_LENGTH).optional(),
     organizationType: z.nativeEnum(OrganizationType).optional().default('OTHER'),
-    // Precise coordinates arrive via D-07 geocoding/manual entry later;
-    // 0 marks "unknown" until then (documented, not silently precise).
-    latitude: z.number().min(-90).max(90).optional().default(0),
-    longitude: z.number().min(-180).max(180).optional().default(0),
+    // Organization location, required for provider/recipient (below): matching
+    // ranks by distance (D-07) and never invents coordinates. There is no
+    // geocoding service, so clients send the pair (e.g. from a map picker).
+    latitude: z.number({ invalid_type_error: 'latitude must be a number' }).finite().min(-90).max(90).optional(),
+    longitude: z.number({ invalid_type_error: 'longitude must be a number' }).finite().min(-180).max(180).optional(),
   })
   .superRefine((value, ctx) => {
     if (value.role === 'PROVIDER' || value.role === 'RECIPIENT') {
@@ -79,6 +80,22 @@ export const registerSchema = z
           code: z.ZodIssueCode.custom,
           path: ['address'],
           message: 'Address is required for provider/recipient',
+        });
+      }
+      for (const field of ['latitude', 'longitude'] as const) {
+        if (value[field] === undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [field],
+            message: `${field} is required for provider/recipient (organization location)`,
+          });
+        }
+      }
+      if (value.latitude === 0 && value.longitude === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['latitude'],
+          message: 'Coordinates 0, 0 are not a real organization location',
         });
       }
     }
@@ -157,8 +174,9 @@ export async function registerUser(input: RegisterInput): Promise<RegisterResult
             name: data.orgName as string,
             type: data.organizationType,
             address: data.address as string,
-            latitude: data.latitude,
-            longitude: data.longitude,
+            // Guaranteed present for provider/recipient by registerSchema.
+            latitude: data.latitude as number,
+            longitude: data.longitude as number,
           },
         });
       }
@@ -273,6 +291,7 @@ export async function loginUser(input: LoginInput): Promise<LoginResult> {
     email: candidate.email,
     role: candidate.role,
     organizationId: candidate.organizationId ?? null,
+    tv: candidate.tokenVersion,
   };
   return {
     user: toSafeUser(candidate),
@@ -291,8 +310,28 @@ function mapLoginError(err: unknown): AppError {
 // AUTH-05: refresh rotation (stateless). Verifies the refresh token with the
 // BE-07 refresh secret + shared claim rules, then issues a FRESH pair — the
 // old refresh token is superseded client-side by the rotated cookies/body.
-// No database, no server session store, no reuse-detection table (that would
-// be a schema change); revocation/status-freshness belongs to later phases.
+// SEC-03: one user lookup per refresh — the account must still be ACTIVE and
+// the token's session version (`tv`, 0 for tokens issued before SEC-03) must
+// equal User.tokenVersion. Bumping the version (password change/reset,
+// suspension, deletion) therefore revokes every outstanding refresh token.
+// Claims are re-issued from the current row, so role/organization changes apply.
+
+/**
+ * SEC-03: fresh token pair for a user from the current row (used after a self
+ * password change, which bumped tokenVersion, to keep the current device signed in).
+ */
+export async function issueSession(userId: string): Promise<{ accessToken: string; refreshToken: string } | null> {
+  const user = await getPrisma().user.findUnique({ where: { id: userId } });
+  if (!user || user.status !== 'ACTIVE') return null;
+  const claims = {
+    id: user.id,
+    email: user.email,
+    role: user.role,
+    organizationId: user.organizationId ?? null,
+    tv: user.tokenVersion,
+  };
+  return { accessToken: signAccessToken(claims), refreshToken: signRefreshToken(claims) };
+}
 
 export interface RefreshResult {
   user: Pick<AuthUser, 'id' | 'email' | 'role' | 'organizationId'>;
@@ -320,14 +359,27 @@ export async function refreshUser(token: unknown): Promise<RefreshResult> {
   if (!validateAuthClaims(decoded)) {
     throw new AppError(401, 'UNAUTHORIZED', 'Invalid token payload');
   }
+  let current: Pick<User, 'id' | 'email' | 'role' | 'organizationId' | 'status' | 'tokenVersion'> | null;
+  try {
+    current = await getPrisma().user.findUnique({
+      where: { id: decoded.id },
+      select: { id: true, email: true, role: true, organizationId: true, status: true, tokenVersion: true },
+    });
+  } catch {
+    throw new AppError(500, 'REFRESH_FAILED', 'Session refresh failed');
+  }
+  if (!current || current.status !== 'ACTIVE' || current.tokenVersion !== (decoded.tv ?? 0)) {
+    throw new AppError(401, 'UNAUTHORIZED', 'Session expired, please sign in again');
+  }
   const claims = {
-    id: decoded.id,
-    email: decoded.email,
-    role: decoded.role,
-    organizationId: decoded.organizationId ?? null,
+    id: current.id,
+    email: current.email,
+    role: current.role,
+    organizationId: current.organizationId ?? null,
+    tv: current.tokenVersion,
   };
   return {
-    user: claims,
+    user: { id: claims.id, email: claims.email, role: claims.role, organizationId: claims.organizationId },
     accessToken: signAccessToken(claims),
     refreshToken: signRefreshToken(claims),
   };
@@ -442,7 +494,8 @@ export async function changePassword(
   const passwordHash = await hashPassword(parsed.data.newPassword);
   try {
     await client.$transaction(async (tx) => {
-      await tx.user.update({ where: { id: userId }, data: { passwordHash } });
+      // SEC-03: revoke every other session; the handler re-issues this one.
+      await tx.user.update({ where: { id: userId }, data: { passwordHash, tokenVersion: { increment: 1 } } });
       await persistAuditEvent(
         {
           actorId: userId,
@@ -491,7 +544,8 @@ export async function adminResetPassword(
   const passwordHash = await hashPassword(parsed.data.newPassword);
   try {
     await client.$transaction(async (tx) => {
-      await tx.user.update({ where: { id: target.id }, data: { passwordHash } });
+      // SEC-03: an admin reset ends every session of the target account.
+      await tx.user.update({ where: { id: target.id }, data: { passwordHash, tokenVersion: { increment: 1 } } });
       await persistAuditEvent(
         {
           actorId: adminId,

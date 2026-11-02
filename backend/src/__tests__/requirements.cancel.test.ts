@@ -175,7 +175,8 @@ function cancel(
 const testDir = path.dirname(fileURLToPath(import.meta.url));
 const backendDir = path.join(testDir, '..', '..');
 function readRepoFile(...parts: string[]): string {
-  return fs.readFileSync(path.join(backendDir, ...parts), 'utf8');
+  // Normalize CRLF so source assertions hold on Windows checkouts (core.autocrlf).
+  return fs.readFileSync(path.join(backendDir, ...parts), 'utf8').replace(/\r\n/g, '\n');
 }
 
 beforeEach(() => {

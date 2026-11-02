@@ -60,7 +60,14 @@ describe('BE-NOTIF-02 create', () => {
     const result = await notificationService.create({ ...validInput }, tx);
     expect(create).toHaveBeenCalledTimes(1);
     expect(create).toHaveBeenCalledWith({
-      data: { userId: 'user-1', type: 'DONATION_CREATED', title: 'Donation created', message: 'Your donation was created' },
+      data: {
+        userId: 'user-1',
+        type: 'DONATION_CREATED',
+        title: 'Donation created',
+        message: 'Your donation was created',
+        entityType: null,
+        entityId: null,
+      },
     });
     expect(result.id).toBe('notif-1');
     expect(result.isRead).toBe(false);
@@ -89,19 +96,18 @@ describe('BE-NOTIF-02 create', () => {
       tx,
     );
     expect(create).toHaveBeenCalledWith({
-      data: { userId: 'user-1', type: 'DONATION_CREATED', title: 'Hi', message: 'Body' },
+      data: { userId: 'user-1', type: 'DONATION_CREATED', title: 'Hi', message: 'Body', entityType: null, entityId: null },
     });
   });
 
-  it('accepts entityType/entityId but does not persist them (DB-08 has no entity columns)', async () => {
+  it('persists entityType/entityId for deep links and de-duplication (NOTIF-05)', async () => {
     const { tx, create } = createMockTx();
     await notificationService.create(
       { ...validInput, entityType: 'Donation', entityId: 'd1' },
       tx,
     );
     const data = create.mock.calls[0][0].data as Record<string, unknown>;
-    expect(data).not.toHaveProperty('entityType');
-    expect(data).not.toHaveProperty('entityId');
+    expect(data).toMatchObject({ entityType: 'Donation', entityId: 'd1' });
   });
 
   it('rejects an invalid NotificationType', async () => {

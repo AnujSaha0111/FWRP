@@ -141,6 +141,18 @@ describe('AUTH-09 PUT /api/organizations/me', () => {
     expect(res.body.data.organization.name).toBe('Good Food Org Updated');
   });
 
+  it('accepts a coordinate pair and rejects half pairs or 0, 0', async () => {
+    const { orgUpdate } = mockPrisma(userRow());
+    const app = createApp();
+    const ok = await request(app).put('/api/organizations/me').set(authHeader()).send({ latitude: 13.01, longitude: 77.6 });
+    expect(ok.status).toBe(200);
+    expect(orgUpdate.mock.calls[0][0].data).toEqual({ latitude: 13.01, longitude: 77.6 });
+    for (const body of [{ longitude: 77.6 }, { latitude: 0, longitude: 0 }, { latitude: 100, longitude: 77.6 }]) {
+      const res = await request(app).put('/api/organizations/me').set(authHeader()).send(body);
+      expect(res.status).toBe(400);
+    }
+  });
+
   it('rejects protected fields, empty bodies, and org-less callers without touching the database', async () => {
     const { orgUpdate, $transaction } = mockPrisma(userRow());
     const app = createApp();

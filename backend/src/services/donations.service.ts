@@ -6,6 +6,7 @@ import { formatZodError } from '../middleware/validate';
 import { getPrisma } from '../lib/prisma';
 import { persistAuditEvent } from './audit.service';
 import { createNotification } from './notification.service';
+import { acceptDonationForRequirement, refreshMatchesSafely, type AcceptanceResult } from './matching.service';
 import { validateAvailabilityWindow, timeRemainingMs } from '../utils/timeWindow';
 import { validateCoordinates } from '../utils/distance';
 import { paginate, parsePagination, type PaginationResult } from '../utils/pagination';
@@ -34,7 +35,11 @@ function mapAcceptanceError(err: unknown): AppError {
   return new AppError(500, 'ACCEPTANCE_FAILED', 'Acceptance failed');
 }
 
-export async function acceptDonation(donationId: string, userId: string): Promise<AcceptDonationResult> {
+export async function acceptDonation(
+  donationId: string,
+  userId: string,
+  requirementId?: unknown
+): Promise<AcceptDonationResult | AcceptanceResult> {
   if (typeof donationId !== 'string' || donationId.trim() === '') {
     throw new AppError(400, 'VALIDATION_ERROR', 'Validation failed', [
       { field: 'donationId', message: 'Donation id is required' },
@@ -69,6 +74,17 @@ export async function acceptDonation(donationId: string, userId: string): Promis
     throw new AppError(403, 'FORBIDDEN', 'Organization is not verified');
   }
 
+  // ACCEPT-01: requirement-linked acceptance reserves quantity (Allocation) and
+  // records the match outcome in one transaction.
+  if (requirementId !== undefined && requirementId !== null) {
+    if (typeof requirementId !== 'string' || requirementId.trim() === '') {
+      throw new AppError(400, 'VALIDATION_ERROR', 'Validation failed', [
+        { field: 'requirementId', message: 'requirementId must be a non-empty string' },
+      ]);
+    }
+    return acceptDonationForRequirement(donationId, requirementId, userId);
+  }
+
   let donation: Donation | null;
   try {
     donation = await client.donation.findUnique({ where: { id: donationId } });
@@ -94,7 +110,11 @@ export async function acceptDonation(donationId: string, userId: string): Promis
 }
 
 export interface DonationsService {
-  acceptDonation(donationId: string, userId: string): Promise<AcceptDonationResult>;
+  acceptDonation(
+    donationId: string,
+    userId: string,
+    requirementId?: unknown
+  ): Promise<AcceptDonationResult | AcceptanceResult>;
   createDonation(userId: string, input: unknown): Promise<CreateDonationResult>;
   updateDonation(donationId: string, userId: string, input: unknown): Promise<UpdateDonationResult>;
   cancelDonation(donationId: string, userId: string): Promise<CancelDonationResult>;
@@ -108,7 +128,7 @@ export interface DonationsService {
 }
 
 export const donationsService: DonationsService = {
-  acceptDonation: (donationId, userId) => acceptDonation(donationId, userId),
+  acceptDonation: (donationId, userId, requirementId) => acceptDonation(donationId, userId, requirementId),
   createDonation: (userId, input) => createDonation(userId, input),
   updateDonation: (donationId, userId, input) => updateDonation(donationId, userId, input),
   cancelDonation: (donationId, userId) => cancelDonation(donationId, userId),
@@ -441,6 +461,8 @@ export async function createDonation(userId: string, input: unknown): Promise<Cr
       );
       return created;
     });
+    // MATCH-06: best-effort recommendation refresh (never fails the write).
+    await refreshMatchesSafely('donation', donation.id);
     return { donation: toDonationProfile(donation) };
   } catch (err) {
     throw mapDonationMutationError(err, 'create');
@@ -575,6 +597,8 @@ export async function updateDonation(
       );
       return updated;
     });
+    // MATCH-06: best-effort recommendation refresh (never fails the write).
+    await refreshMatchesSafely('donation', donation.id);
     return { donation: toDonationProfile(donation) };
   } catch (err) {
     throw mapDonationMutationError(err, 'update');
@@ -678,6 +702,8 @@ export async function cancelDonation(
       );
       return updated;
     });
+    // MATCH-06: best-effort recommendation refresh (never fails the write).
+    await refreshMatchesSafely('donation', donation.id);
     return { donation: toDonationProfile(donation) };
   } catch (err) {
     throw mapDonationMutationError(err, 'cancel');
@@ -1444,6 +1470,8 @@ export async function overrideDonation(
       );
       return updated;
     });
+    // MATCH-06: an override changes matchability (expire or re-open recommendations).
+    await refreshMatchesSafely('donation', donation.id);
     return { donation: toDonationProfile(donation) };
   } catch (err) {
     throw mapDonationMutationError(err, 'override');

@@ -1,4 +1,4 @@
-﻿-- Migration: 20260831000001_init
+-- Migration: 20260831000001_init
 -- Description: Baseline schema from empty to DB-13 state (9 models + 10 enums, 26 indexes, 9 FKs with onDelete/onUpdate)
 -- Generated via: prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script (without CHECKs)
 -- NOTE: This is part 1 of 2 for DB-14 incremental history. Part 2 (20260831000002_add_check_constraints) adds the 8 DB-12 CHECK constraints.

@@ -12,15 +12,19 @@ import { authRouter } from './routes/auth';
 import { deliveryRouter } from './routes/deliveries';
 import { donationRouter } from './routes/donations';
 import { healthRouter } from './routes/health';
+import { incidentsRouter } from './routes/incidents';
 import { matchRouter } from './routes/matches';
 import { notificationRouter } from './routes/notifications';
 import { organizationsRouter } from './routes/organizations';
 import { requirementRouter } from './routes/requirements';
 import { usersRouter } from './routes/users';
+import { volunteersRouter } from './routes/volunteers';
 import { logger } from './utils/logger';
 
 export function createApp() {
   const app = express();
+  // SEC-01: rate limits key on req.ip; behind a proxy it must be the client address.
+  if (env.TRUST_PROXY_HOPS > 0) app.set('trust proxy', env.TRUST_PROXY_HOPS);
 
   app.use(helmet());
   app.use(
@@ -51,6 +55,10 @@ export function createApp() {
   app.use('/api/users', usersRouter);
   // AUTH-09 self organization (live).
   app.use('/api/organizations', organizationsRouter);
+  // LOG-01 volunteer availability (live).
+  app.use('/api/volunteers', volunteersRouter);
+  // ADMIN-03 incident filing (reported accounts + disputes).
+  app.use('/api/incidents', incidentsRouter);
 
   app.use(notFound);
   app.use(errorMiddleware);

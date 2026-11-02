@@ -10,6 +10,7 @@ import { AppError } from '../middleware/error';
 import { formatZodError } from '../middleware/validate';
 import { getPrisma } from '../lib/prisma';
 import { persistAuditEvent } from './audit.service';
+import { refreshMatchesSafely } from './matching.service';
 import { strictDateField } from '../utils/validation';
 import { assertCategoryActive } from '../utils/categoryValidation';
 import {
@@ -208,6 +209,8 @@ export async function createRequirement(
       });
       return created;
     });
+    // MATCH-06: best-effort recommendation refresh (never fails the write).
+    await refreshMatchesSafely('requirement', requirement.id);
     return { requirement: toRequirementProfile(requirement) };
   } catch (err) {
     throw mapRequirementMutationError(err, 'create');
@@ -456,6 +459,8 @@ export async function updateRequirement(
       });
       return updated;
     });
+    // MATCH-06: best-effort recommendation refresh (never fails the write).
+    await refreshMatchesSafely('requirement', requirement.id);
     return { requirement: toRequirementProfile(requirement) };
   } catch (err) {
     throw mapRequirementMutationError(err, 'update');
@@ -579,6 +584,8 @@ export async function cancelRequirement(
       });
       return cancelled;
     });
+    // MATCH-06: best-effort recommendation refresh (never fails the write).
+    await refreshMatchesSafely('requirement', requirement.id);
     return { requirement: toRequirementProfile(requirement) };
   } catch (err) {
     throw mapRequirementMutationError(err, 'cancel');

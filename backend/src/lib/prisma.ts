@@ -11,6 +11,10 @@ export function getPrisma(): PrismaClient {
   if (!prismaInstance) {
     prismaInstance = new PrismaClient({
       log: env.NODE_ENV === 'development' ? ['warn', 'error'] : ['error'],
+      // Interactive transactions make one round trip per statement; against a
+      // remote pooled database (Supabase) Prisma's 5 s default is too tight for
+      // multi-step writes such as acceptance. Applies to every $transaction.
+      transactionOptions: { maxWait: 10_000, timeout: 20_000 },
     });
   }
   return prismaInstance;
