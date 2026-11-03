@@ -58,8 +58,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async () => {
     await authApi.logout().catch(() => undefined);
-    queryClient.clear();
+    // Update the session entry in place: the provider's useQuery observes this
+    // exact entry. (queryClient.clear() would destroy it, leaving the observer
+    // on a dead entry and the UI still signed in.)
+    await queryClient.cancelQueries();
     queryClient.setQueryData(SESSION_KEY, null);
+    // Drop everything cached for the previous user.
+    queryClient.removeQueries({ predicate: (q) => q.queryKey[0] !== SESSION_KEY[0] });
   }, [queryClient]);
 
   const value = useMemo<AuthContextValue>(() => {

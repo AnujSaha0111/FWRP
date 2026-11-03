@@ -30,6 +30,32 @@ const providerDashboard = {
   recentActivity: [{ donationId: 'don-1', foodName: 'Veg biryani', status: 'AVAILABLE', updatedAt: new Date().toISOString() }],
 };
 
+describe('sign out', () => {
+  it('clears the session, lands on sign in, and stays signed out', async () => {
+    let signedIn = true;
+    const { calls } = mockApi({
+      'GET /api/users/me': () => (signedIn ? { data: profile('PROVIDER') } : { status: 401, error: { code: 'UNAUTHORIZED', message: 'x' } }),
+      'POST /api/auth/refresh': () => ({ status: 401, error: { code: 'UNAUTHORIZED', message: 'x' } }),
+      'POST /api/auth/logout': () => {
+        signedIn = false;
+        return { data: { loggedOut: true } };
+      },
+      'GET /api/notifications/unread-count': () => ({ data: { count: 0 } }),
+      'GET /api/analytics/dashboard': () => ({ data: providerDashboard }),
+    });
+    const { router } = renderRoute('/provider');
+    await userEvent.click(await screen.findByRole('button', { name: /Account menu/ }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Sign out' }));
+    expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/login');
+    expect(calls.some((c) => c.method === 'POST' && c.path === '/api/auth/logout')).toBe(true);
+    // Going back to a protected page must not restore the old session.
+    await router.navigate('/provider');
+    await waitFor(() => expect(router.state.location.pathname).toBe('/login'));
+    expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument();
+  });
+});
+
 describe('routing and guards', () => {
   it('sends anonymous visitors to sign in', async () => {
     mockApi(anonymous);
