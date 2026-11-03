@@ -1,32 +1,39 @@
-import { useState } from 'react';
-import AdminVerification from './components/AdminVerification';
-import MyOrganization from './components/MyOrganization';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { useState, type ReactNode } from 'react';
+import { RouterProvider } from 'react-router';
+import { Toaster } from 'sonner';
+import { AuthProvider } from '@/auth/AuthProvider';
+import { ApiError } from '@/lib/api';
+import { createAppRouter } from '@/router';
 
-type View = 'admin' | 'mine';
+export function createQueryClient() {
+  return new QueryClient({
+    defaultOptions: {
+      queries: {
+        staleTime: 30_000,
+        refetchOnWindowFocus: true,
+        // Retry network blips, never client errors (4xx).
+        retry: (count, err) => count < 2 && !(err instanceof ApiError && err.status >= 400 && err.status < 500),
+      },
+    },
+  });
+}
 
-function App() {
-  const [view, setView] = useState<View>('admin');
+export function Providers({ children, client }: { children: ReactNode; client?: QueryClient }) {
+  const [queryClient] = useState(() => client ?? createQueryClient());
   return (
-    <main style={{ fontFamily: 'system-ui, sans-serif', padding: '2rem', maxWidth: 720, margin: '0 auto' }}>
-      <h1>Food Waste Redistribution Platform</h1>
-      <p>Frontend shell — Iteration 0</p>
-      <p>
-        Backend health: <code>GET /api/health</code>
-      </p>
-      <nav>
-        <button type="button" onClick={() => setView('admin')} disabled={view === 'admin'}>
-          Admin verification
-        </button>{' '}
-        <button type="button" onClick={() => setView('mine')} disabled={view === 'mine'}>
-          My organization
-        </button>
-      </nav>
-      {view === 'admin' ? <AdminVerification /> : <MyOrganization />}
-      <p style={{ color: '#666', fontSize: '0.9rem' }}>
-        Monorepo: frontend (React + Vite + TypeScript) · backend (Node + Express + TypeScript) · PostgreSQL + Prisma
-      </p>
-    </main>
+    <QueryClientProvider client={queryClient}>
+      <AuthProvider>{children}</AuthProvider>
+      <Toaster position="top-right" richColors closeButton />
+    </QueryClientProvider>
   );
 }
 
-export default App;
+export default function App() {
+  const [router] = useState(createAppRouter);
+  return (
+    <Providers>
+      <RouterProvider router={router} />
+    </Providers>
+  );
+}

@@ -41,3 +41,6 @@ coverage/
 # Uploads (Phase 6/11, D-12)
 uploads/
 captured_emails/
+
+# Claude Code (local tool settings)
+.claude/
