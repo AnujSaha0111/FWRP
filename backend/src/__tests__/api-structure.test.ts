@@ -22,6 +22,7 @@ const AUTHENTICATED_ROUTES: Array<[string, string]> = [
   ['/api/notifications', '/api/notifications'],
   ['/api/analytics', '/api/analytics/dashboard'],
   ['/api/volunteers', '/api/volunteers/me/availability'],
+  ['/api/categories', '/api/categories'],
   ['/api/users', '/api/users/me'],
   ['/api/organizations', '/api/organizations/me'],
   ['/api/admin', '/api/admin/organizations'],

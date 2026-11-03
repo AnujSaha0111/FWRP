@@ -9,6 +9,7 @@ import { notFound } from './middleware/notFound';
 import { adminRouter } from './routes/admin';
 import { analyticsRouter } from './routes/analytics';
 import { authRouter } from './routes/auth';
+import { categoriesRouter } from './routes/categories';
 import { deliveryRouter } from './routes/deliveries';
 import { donationRouter } from './routes/donations';
 import { healthRouter } from './routes/health';
@@ -59,6 +60,8 @@ export function createApp() {
   app.use('/api/volunteers', volunteersRouter);
   // ADMIN-03 incident filing (reported accounts + disputes).
   app.use('/api/incidents', incidentsRouter);
+  // CAT-01 active categories for donation/requirement forms.
+  app.use('/api/categories', categoriesRouter);
 
   app.use(notFound);
   app.use(errorMiddleware);
