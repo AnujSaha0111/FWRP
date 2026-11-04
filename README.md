@@ -95,3 +95,4 @@ Set `EXPIRY_JOB_INTERVAL_MINUTES`, `NOTIFICATION_JOB_INTERVAL_MINUTES` or
 | Administration | [docs/admin.md](docs/admin.md) |
 | Security | [docs/security.md](docs/security.md) |
 | Email | [docs/email.md](docs/email.md) |
+| **Manual testing guide** (for testers) | [docs/testing-guide.md](docs/testing-guide.md) |
