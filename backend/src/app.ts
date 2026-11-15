@@ -68,3 +68,13 @@ export function createApp() {
 
   return app;
 }
+
+// Serverless entry (Vercel uses src/app.ts as the function and needs a default
+// export). The app is built on the first request, so importing this module
+// (tests, src/index.ts) has no side effects. Local/long-running servers start
+// from src/index.ts instead, which also runs the background jobs.
+let serverlessApp: ReturnType<typeof createApp> | undefined;
+export default function handler(req: express.Request, res: express.Response) {
+  serverlessApp ??= createApp();
+  return serverlessApp(req, res);
+}
