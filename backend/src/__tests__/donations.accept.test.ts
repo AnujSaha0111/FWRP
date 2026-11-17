@@ -9,7 +9,7 @@ vi.mock('../lib/prisma', () => ({
 
 import type { PrismaClient, VerificationStatus } from '@prisma/client';
 import { getPrisma } from '../lib/prisma';
-import { createApp } from '../app';
+import { createApp } from '../createApp';
 import { acceptDonation } from '../services/donations.service';
 import { signAccessToken } from '../utils/jwt';
 

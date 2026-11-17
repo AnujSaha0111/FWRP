@@ -9,7 +9,7 @@ vi.mock('../lib/prisma', () => ({
 
 import type { PrismaClient } from '@prisma/client';
 import { getPrisma } from '../lib/prisma';
-import { createApp } from '../app';
+import { createApp } from '../createApp';
 import { listUsers, searchAuditLogs, updateUserStatus } from '../services/admin.service';
 import { adminUpdateIncident, createIncident, getIncident, INCIDENT_TRANSITIONS } from '../services/incidents.service';
 import { clearSettingsCache, getSettings, loadMatchingConfig, updateSettings } from '../services/settings.service';

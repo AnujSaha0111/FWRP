@@ -8,7 +8,7 @@ vi.mock('../lib/prisma', () => ({
 
 import type { PrismaClient } from '@prisma/client';
 import { getPrisma } from '../lib/prisma';
-import { createApp } from '../app';
+import { createApp } from '../createApp';
 import { createRequirement } from '../services/requirements.service';
 import { signAccessToken } from '../utils/jwt';
 

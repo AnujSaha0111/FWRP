@@ -11,7 +11,7 @@ vi.mock('../lib/prisma', () => ({
 
 import type { PrismaClient } from '@prisma/client';
 import { getPrisma } from '../lib/prisma';
-import { createApp } from '../app';
+import { createApp } from '../createApp';
 import { signAccessToken, signRefreshToken } from '../utils/jwt';
 
 // AUTH-07: role-based authorization matrix — all 4 D-04 roles against every

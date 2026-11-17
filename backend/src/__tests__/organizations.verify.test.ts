@@ -12,7 +12,7 @@ vi.mock('../lib/prisma', () => ({
 import type { PrismaClient, VerificationStatus } from '@prisma/client';
 import { NotificationType } from '@prisma/client';
 import { getPrisma } from '../lib/prisma';
-import { createApp } from '../app';
+import { createApp } from '../createApp';
 import {
   assertVerificationTransition,
   reviewOrganization,

@@ -8,7 +8,7 @@ vi.mock('../lib/prisma', () => ({
 
 import type { PrismaClient } from '@prisma/client';
 import { getPrisma } from '../lib/prisma';
-import { createApp } from '../app';
+import { createApp } from '../createApp';
 import { signAccessToken } from '../utils/jwt';
 
 // DON-11: provider permissions — a consolidated authorization matrix proving

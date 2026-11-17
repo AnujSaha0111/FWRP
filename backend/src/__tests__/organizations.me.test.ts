@@ -9,7 +9,7 @@ vi.mock('../lib/prisma', () => ({
 
 import type { PrismaClient } from '@prisma/client';
 import { getPrisma } from '../lib/prisma';
-import { createApp } from '../app';
+import { createApp } from '../createApp';
 import { signAccessToken } from '../utils/jwt';
 
 // AUTH-09: caller's own organization only. The org id always resolves from

@@ -10,7 +10,7 @@ vi.mock('../lib/prisma', () => ({
 
 import type { PrismaClient } from '@prisma/client';
 import { getPrisma } from '../lib/prisma';
-import { createApp } from '../app';
+import { createApp } from '../createApp';
 import { errorMiddleware } from '../middleware/error';
 import { ipAndEmailKey, rateLimit } from '../middleware/rateLimit';
 import { createEmailService, MockEmailProvider } from '../services/email.service';

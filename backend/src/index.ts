@@ -1,4 +1,4 @@
-import { createApp } from './app';
+import { createApp } from './createApp';
 import { env, isDatabaseConfigured } from './config/env';
 import { startMatchingRefreshJob } from './jobs/matchingRefresh';
 import { startExpiryJob } from './jobs/expiry';

@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createApp } from '../app';
+import { createApp } from '../createApp';
 
 // BE-04: API structure and route mounting. Every domain router is live now
 // (the last BE-04 placeholders were retired by MATCH-07, LOG-03, NOTIF-01 and

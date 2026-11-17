@@ -13,7 +13,7 @@ vi.mock('../lib/prisma', () => ({
 
 import type { PrismaClient } from '@prisma/client';
 import { getPrisma } from '../lib/prisma';
-import { createApp } from '../app';
+import { createApp } from '../createApp';
 import { env } from '../config/env';
 
 // AUTH-11: authentication integration composition. Unit hash/compare,

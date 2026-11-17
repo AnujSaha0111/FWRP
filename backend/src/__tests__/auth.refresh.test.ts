@@ -11,7 +11,7 @@ vi.mock('../lib/prisma', () => ({
 
 import type { PrismaClient } from '@prisma/client';
 import { getPrisma } from '../lib/prisma';
-import { createApp } from '../app';
+import { createApp } from '../createApp';
 import { refreshUser } from '../services/auth.service';
 import { signRefreshToken } from '../utils/jwt';
 import { authenticate } from '../middleware/auth';

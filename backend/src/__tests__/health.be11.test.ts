@@ -1,6 +1,6 @@
 import request from 'supertest';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { createApp } from '../app';
+import { createApp } from '../createApp';
 
 // Mock prisma healthCheckDb to control DB states without live DB
 vi.mock('../lib/prisma', async () => {

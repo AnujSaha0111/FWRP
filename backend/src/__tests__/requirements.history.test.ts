@@ -13,7 +13,7 @@ vi.mock('../lib/prisma', () => ({
 import type { PrismaClient } from '@prisma/client';
 import { Prisma } from '@prisma/client';
 import { getPrisma } from '../lib/prisma';
-import { createApp } from '../app';
+import { createApp } from '../createApp';
 import {
   createRequirement,
   getRequirementHistory,

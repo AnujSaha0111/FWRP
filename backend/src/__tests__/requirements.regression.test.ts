@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+﻿import { describe, it, expect, vi, beforeEach } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -54,7 +54,7 @@ function filesMatching(re: RegExp): string[] {
 
 // Any `quantityFulfilled:` assignment whose value is NOT a property read
 // (`x.quantityFulfilled`), a `select` marker (`true`), or a type (`number`)
-// would be a fulfillment mutation — which must not exist before Phase 11.
+// would be a fulfillment mutation â€” which must not exist before Phase 11.
 function quantityFulfilledWriteOffenders(): string[] {
   const offenders: string[] = [];
   for (const f of productionTsFiles()) {
@@ -199,7 +199,7 @@ beforeEach(() => {
 });
 
 describe('REQ-09 cross-feature requirement lifecycle regression', () => {
-  it('create → edit → cancel preserves history ordering and never mutates quantityFulfilled', async () => {
+  it('create â†’ edit â†’ cancel preserves history ordering and never mutates quantityFulfilled', async () => {
     const m = mockLifecycleBackend();
 
     const created = await createRequirement('user-1', createBody);
@@ -215,7 +215,7 @@ describe('REQ-09 cross-feature requirement lifecycle regression', () => {
     expect(cancelled.requirement.status).toBe('CANCELLED');
     expect(cancelled.requirement.quantity_fulfilled).toBe(0);
 
-    // RequirementHistory is the authoritative source: CREATE → UPDATE → CANCEL.
+    // RequirementHistory is the authoritative source: CREATE â†’ UPDATE â†’ CANCEL.
     expect(m.history.map((h) => h.action)).toEqual(['CREATE', 'UPDATE', 'CANCEL']);
     expect(m.history[2]).toMatchObject({
       requirementId: 'req-1',
@@ -294,7 +294,7 @@ describe('REQ-09 route/state/D-07/D-10 preservation', () => {
     for (const forbidden of ["'/status'", "'/expire'", "'/override'", "'/allocat", "'/fulfil"]) {
       expect(routes).not.toContain(forbidden);
     }
-    expect(readRepoFile('src', 'app.ts')).not.toContain('/api/allocations');
+    expect(readRepoFile('src', 'createApp.ts')).not.toContain('/api/allocations');
   });
 
   it('keeps the REQ-04 transition map authoritative and unchanged', () => {
